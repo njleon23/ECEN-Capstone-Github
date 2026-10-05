@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers.agendas import router as agendas_router
 
 app = FastAPI(
     title="Council Brief API",
@@ -16,6 +17,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(agendas_router)
 
 
 @app.get("/api/v1/health")
