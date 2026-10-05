@@ -1,0 +1,1 @@
+"""Council Brief backend package."""
