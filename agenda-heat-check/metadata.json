@@ -1,0 +1,8 @@
+{
+  "name": "Agenda Heat Check",
+  "description": "City of College Station Executive Council Intelligence - Predictive civic friction, multi-agent agenda verification, and grounded dais intelligence dossiers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
