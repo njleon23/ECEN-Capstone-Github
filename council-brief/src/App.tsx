@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"
 import {
   AlertTriangle,
@@ -45,7 +45,10 @@ import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
-import { AgendaItem, sampleItems, sampleSources, SourceRecord } from "./demo-data"
+
+// Import our FastAPI backend service layer instead of static mock data
+import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api" //fetchsoures and addsourcerecord will help us w backend
+import { AgendaItem, SourceRecord } from "./api" //fixed the previous error cs i deleted demodata
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -93,71 +96,6 @@ async function extractFileText(file: File) {
   return file.text()
 }
 
-function inferItems(text: string, fileName: string): AgendaItem[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line.length > 7)
-
-  const matches: { number: string; title: string }[] = []
-  const seen = new Set<string>()
-  const patterns = [
-    /^(?:ITEM\s+)?(\d+(?:\.\d+)+)\s*[-:–]?\s+(.{8,180})$/i,
-    /^(\d+)\.\s+(.{8,180})$/,
-  ]
-
-  for (const line of lines) {
-    for (const pattern of patterns) {
-      const match = line.match(pattern)
-      if (match && !seen.has(match[1])) {
-        seen.add(match[1])
-        matches.push({ number: match[1], title: match[2].trim() })
-        break
-      }
-    }
-    if (matches.length >= 12) break
-  }
-
-  if (matches.length === 0) {
-    const paragraphs = text
-      .split(/\n\s*\n/)
-      .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
-      .filter((paragraph) => paragraph.length >= 30 && paragraph.length <= 240)
-      .slice(0, 6)
-    paragraphs.forEach((title, index) => matches.push({ number: `${index + 1}`, title }))
-  }
-
-  return matches.map((match, index) => {
-    const lower = match.title.toLowerCase()
-    const publicScore = /hearing|public comment|zoning/.test(lower) ? 2 : 0
-    const householdScore = /tax|fee|rate|utility|budget/.test(lower) ? 2 : 0
-    const scaleScore = /budget|citywide|capital|zoning|plan|contract/.test(lower) ? 2 : 1
-
-    return {
-      id: `upload-${Date.now()}-${index}`,
-      number: match.number,
-      title: match.title,
-      department: "Department not identified",
-      itemType: publicScore > 0 ? "Public action" : "Agenda action",
-      reviewStatus: "Draft generated",
-      summary: `This item was extracted from ${fileName}. Review the original agenda and attach supporting records before using the generated preparation material.`,
-      factors: [
-        { key: "public", label: "Formal public participation", description: "Inferred from agenda wording; verify manually.", score: publicScore },
-        { key: "household", label: "Direct household effect", description: "Inferred from taxes, rates, fees, or utilities.", score: householdScore },
-        { key: "scale", label: "Decision scale", description: "Preliminary estimate based on agenda wording.", score: scaleScore },
-        { key: "attention", label: "Prior public attention", description: "No historical evidence attached yet.", score: 0 },
-        { key: "tradeoff", label: "Decision uncertainty", description: "Manual review is required.", score: 1 },
-      ],
-      sourceIds: [],
-      keyFacts: ["Agenda text was successfully extracted.", "Supporting facts have not yet been verified."],
-      historicalContext: [],
-      likelyQuestions: ["What decision is Council being asked to make?", "What supporting evidence should staff verify?"],
-      talkingPoints: ["Confirm the agenda description and responsible department.", "Attach approved sources before briefing leadership."],
-      missingInformation: ["Supporting City records", "Department review", "Verified dates and financial figures"],
-    }
-  })
-}
-
 function EmptySection({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
@@ -167,9 +105,10 @@ function EmptySection({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const [items, setItems] = useState<AgendaItem[]>(sampleItems)
-  const [sources, setSources] = useState<SourceRecord[]>(sampleSources)
-  const [selectedId, setSelectedId] = useState(sampleItems[0].id)
+  // State management for agendas and sources fetched from FastAPI
+  const [items, setItems] = useState<AgendaItem[]>([])
+  const [sources, setSources] = useState<SourceRecord[]>([])
+  const [selectedId, setSelectedId] = useState<string>("")
   const [view, setView] = useState<View>("meeting")
   const [briefTab, setBriefTab] = useState("briefing")
   const [query, setQuery] = useState("")
@@ -181,10 +120,30 @@ export default function App() {
   const [sourceTitle, setSourceTitle] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
 
+  // Fetch live agendas and sources from FastAPI backend on initial component mount
+  useEffect(() => {
+    async function loadBackendData() {
+      try {
+        const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
+        if (agendaData && agendaData.length > 0) {
+          setItems(agendaData)
+          setSelectedId(agendaData[0].id)
+        }
+        if (sourceData) {
+          setSources(sourceData)
+        }
+      } catch (error) {
+        console.error("Failed to connect to FastAPI backend:", error)
+        toast.error("Could not connect to FastAPI backend on port 8000. Check server status.")
+      }
+    }
+    loadBackendData()
+  }, [])
+
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
-  const selectedScore = scoreFor(selected)
+  const selectedScore = selected ? scoreFor(selected) : 0
   const selectedPriority = priorityFor(selectedScore)
-  const selectedSources = sources.filter((source) => selected.sourceIds.includes(source.id))
+  const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -201,6 +160,7 @@ export default function App() {
   }
 
   const updateFactor = (key: string, score: number) => {
+    if (!selected) return
     updateSelected({
       factors: selected.factors.map((factor) =>
         factor.key === key ? { ...factor, score } : factor,
@@ -208,6 +168,7 @@ export default function App() {
     })
   }
 
+  // Handle Agenda Upload via FastAPI endpoint
   const processAgenda = async () => {
     if (!agendaFile) {
       toast.error("Choose an agenda PDF or text file first.")
@@ -215,23 +176,27 @@ export default function App() {
     }
     setProcessing(true)
     try {
-      const text = await extractFileText(agendaFile)
-      const parsed = inferItems(text, agendaFile.name)
-      if (parsed.length === 0) throw new Error("No agenda items could be identified")
-      setItems((current) => [...parsed, ...current])
-      setSelectedId(parsed[0].id)
+      // Send file to FastAPI backend upload endpoint
+      const responseData = await uploadAgendaPdf(agendaFile)
+      // Refresh items list from backend after processing
+      const updatedAgendas = await fetchAgendas()
+      setItems(updatedAgendas)
+      if (updatedAgendas.length > 0) {
+        setSelectedId(updatedAgendas[0].id)
+      }
       setView("meeting")
       setBriefTab("priority")
       setUploadOpen(false)
-      toast.success(`${parsed.length} agenda item${parsed.length === 1 ? "" : "s"} extracted for review.`)
+      toast.success("Agenda packet successfully uploaded and processed by FastAPI.")
     } catch (error) {
       console.error(error)
-      toast.error("The file could not be processed. Try a text-based PDF or a TXT file.")
+      toast.error("The file could not be processed by the backend server.")
     } finally {
       setProcessing(false)
     }
   }
 
+  // Handle Source Addition via FastAPI endpoint
   const addSource = async () => {
     if (!sourceFile && !sourceTitle.trim()) {
       toast.error("Add a title or choose a source document.")
@@ -240,9 +205,7 @@ export default function App() {
     setProcessing(true)
     try {
       const text = sourceFile ? await extractFileText(sourceFile) : ""
-      const id = `source-${Date.now()}`
-      const record: SourceRecord = {
-        id,
+      const newSource = {
         title: sourceTitle.trim() || sourceFile?.name || "Untitled source",
         type: sourceFile?.type === "application/pdf" ? "Uploaded PDF" : "Uploaded record",
         date: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
@@ -250,22 +213,28 @@ export default function App() {
         excerpt: text.replace(/\s+/g, " ").trim().slice(0, 500) || "No text excerpt was supplied.",
         fileName: sourceFile?.name,
       }
-      setSources((current) => [record, ...current])
-      updateSelected({ sourceIds: [...selected.sourceIds, id] })
+
+      // Save source via FastAPI endpoint
+      const savedSource = await addSourceRecord(newSource)
+      setSources((current) => [savedSource, ...current])
+      if (selected) {
+        updateSelected({ sourceIds: [...selected.sourceIds, savedSource.id] })
+      }
       setSourceOpen(false)
       setSourceTitle("")
       setSourceUrl("")
       setSourceFile(null)
-      toast.success("Source added to the selected agenda item.")
+      toast.success("Source successfully registered with backend.")
     } catch (error) {
       console.error(error)
-      toast.error("The source could not be processed.")
+      toast.error("The source could not be saved to the backend.")
     } finally {
       setProcessing(false)
     }
   }
 
   const downloadBriefing = () => {
+    if (!selected) return
     const payload = {
       meeting: "College Station City Council — August 27, 2026",
       agendaItem: selected,
@@ -321,10 +290,10 @@ export default function App() {
           <div className="rounded-xl bg-white/8 p-4">
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">
               <ShieldCheck className="size-4" />
-              Prototype boundary
+              FastAPI Connected
             </div>
             <p className="text-sm leading-5 text-slate-300">
-              Public data only. Generated material remains a draft until a person reviews it.
+              Connected to backend API on port 8000.
             </p>
           </div>
         </div>
@@ -341,11 +310,11 @@ export default function App() {
               <h2 className="truncate text-lg font-semibold tracking-tight sm:text-xl">
                 College Station City Council
               </h2>
-              <p className="text-sm text-slate-500">August 27, 2026 · Retrospective proof of concept</p>
+              <p className="text-sm text-slate-500">August 27, 2026 · FastAPI Live Integration</p>
             </div>
             <div className="flex shrink-0 items-center gap-2 print:hidden">
               <Badge variant="outline" className="hidden border-blue-200 bg-blue-50 text-blue-700 sm:inline-flex">
-                Provisional requirements
+                FastAPI Active
               </Badge>
               <Button variant="outline" onClick={() => setSourceOpen(true)} className="hidden sm:inline-flex">
                 <Plus /> Add source
@@ -354,18 +323,6 @@ export default function App() {
                 <Upload /> <span className="hidden sm:inline">Upload agenda</span><span className="sm:hidden">Upload</span>
               </Button>
             </div>
-          </div>
-
-          <div className="flex gap-1 overflow-x-auto border-t border-slate-100 px-4 py-2 lg:hidden print:hidden">
-            {[
-              { id: "meeting" as const, label: "Meeting" },
-              { id: "sources" as const, label: "Sources" },
-              { id: "evaluation" as const, label: "Evaluation" },
-            ].map((nav) => (
-              <Button key={nav.id} size="sm" variant={view === nav.id ? "secondary" : "ghost"} onClick={() => setView(nav.id)}>
-                {nav.label}
-              </Button>
-            ))}
           </div>
         </header>
 
@@ -403,7 +360,7 @@ export default function App() {
                     {filteredItems.map((item) => {
                       const score = scoreFor(item)
                       const priority = priorityFor(score)
-                      const active = item.id === selected.id
+                      const active = selected && item.id === selected.id
                       return (
                         <button
                           key={item.id}
@@ -431,153 +388,157 @@ export default function App() {
               </section>
 
               <section className="min-w-0">
-                <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-100 p-5 sm:p-6">
-                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0">
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Item {selected.number}</Badge>
-                          <Badge variant="outline" className={statusStyle(selected.reviewStatus)}>{selected.reviewStatus}</Badge>
-                          <span className="text-sm text-slate-500">{selected.itemType}</span>
-                        </div>
-                        <h2 className="max-w-3xl text-2xl font-semibold tracking-tight sm:text-[1.75rem]">{selected.title}</h2>
-                        <p className="mt-2 text-sm text-slate-500">{selected.department}</p>
-                      </div>
-                      <div className={`min-w-[170px] rounded-xl border px-4 py-3 ${priorityStyle(selectedPriority)}`}>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-xs font-semibold uppercase tracking-[0.12em]">Preparation priority</span>
-                          <CircleGauge className="size-4" />
-                        </div>
-                        <div className="mt-1 flex items-end gap-2">
-                          <span className="text-2xl font-bold">{selectedPriority}</span>
-                          <span className="pb-0.5 text-sm font-semibold">{selectedScore}/10</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <Tabs value={briefTab} onValueChange={setBriefTab} className="gap-0">
-                    <div className="overflow-x-auto border-b border-slate-100 px-5 sm:px-6 print:hidden">
-                      <TabsList variant="line" className="h-12 gap-5">
-                        <TabsTrigger value="briefing">Briefing</TabsTrigger>
-                        <TabsTrigger value="priority">Priority factors</TabsTrigger>
-                        <TabsTrigger value="evidence">Evidence <span className="rounded-full bg-slate-100 px-1.5 text-[0.7rem]">{selectedSources.length}</span></TabsTrigger>
-                      </TabsList>
-                    </div>
-
-                    <TabsContent value="briefing" className="p-5 sm:p-6">
-                      <div className="mb-6 rounded-xl border-l-4 border-blue-600 bg-blue-50/70 p-4">
-                        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-900">
-                          <Sparkles className="size-4" /> Source-grounded draft
-                        </div>
-                        <Textarea
-                          value={selected.summary}
-                          onChange={(event) => updateSelected({ summary: event.target.value })}
-                          className="min-h-28 resize-y border-blue-100 bg-white/80 leading-6"
-                          aria-label="Editable agenda item summary"
-                        />
-                      </div>
-
-                      <div className="grid gap-6 lg:grid-cols-2">
-                        <BriefingList title="Key facts" icon={CheckCircle2} items={selected.keyFacts} />
-                        <BriefingList title="Historical context" icon={BookOpen} items={selected.historicalContext} empty="No historical context has been attached." />
-                        <EditableList
-                          title="Likely questions"
-                          icon={FileSearch}
-                          items={selected.likelyQuestions}
-                          onChange={(likelyQuestions) => updateSelected({ likelyQuestions })}
-                        />
-                        <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talkingPoints} />
-                      </div>
-
-                      <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                        <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
-                          <AlertTriangle className="size-4" /> Verification needed
-                        </div>
-                        <ul className="space-y-1.5 text-sm leading-5 text-amber-900/80">
-                          {selected.missingInformation.map((item) => <li key={item}>• {item}</li>)}
-                        </ul>
-                      </div>
-
-                      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5 print:hidden">
-                        <p className="max-w-xl text-xs leading-5 text-slate-500">
-                          Prototype output. Verify all claims against the original agenda packet before leadership use.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>
-                          <Button variant="outline" onClick={downloadBriefing}><Download /> Export JSON</Button>
-                          <Button
-                            className="bg-blue-600 hover:bg-blue-700"
-                            onClick={() => {
-                              updateSelected({ reviewStatus: "Approved" })
-                              toast.success("Briefing marked approved for this demonstration.")
-                            }}
-                          >
-                            <Check /> Approve briefing
-                          </Button>
-                        </div>
-                      </div>
-                    </TabsContent>
-
-                    <TabsContent value="priority" className="p-5 sm:p-6">
-                      <div className="mb-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h3 className="font-semibold">Transparent provisional rubric</h3>
-                          <p className="mt-1 text-sm leading-5 text-slate-500">Adjust the evidence-based factors. This measures preparation effort, not public opinion.</p>
-                        </div>
-                        <div className="min-w-44">
-                          <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                            <span>{selectedPriority}</span><span>{selectedScore}/10</span>
+                {selected ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-100 p-5 sm:p-6">
+                      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">Item {selected.number}</Badge>
+                            <Badge variant="outline" className={statusStyle(selected.reviewStatus)}>{selected.reviewStatus}</Badge>
+                            <span className="text-sm text-slate-500">{selected.itemType}</span>
                           </div>
-                          <Progress value={selectedScore * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
+                          <h2 className="max-w-3xl text-2xl font-semibold tracking-tight sm:text-[1.75rem]">{selected.title}</h2>
+                          <p className="mt-2 text-sm text-slate-500">{selected.department}</p>
+                        </div>
+                        <div className={`min-w-[170px] rounded-xl border px-4 py-3 ${priorityStyle(selectedPriority)}`}>
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em]">Preparation priority</span>
+                            <CircleGauge className="size-4" />
+                          </div>
+                          <div className="mt-1 flex items-end gap-2">
+                            <span className="text-2xl font-bold">{selectedPriority}</span>
+                            <span className="pb-0.5 text-sm font-semibold">{selectedScore}/10</span>
+                          </div>
                         </div>
                       </div>
+                    </div>
 
-                      <div className="space-y-4">
-                        {selected.factors.map((factor) => (
-                          <div key={factor.key} className="rounded-xl border border-slate-200 p-4">
-                            <div className="mb-4 flex items-start justify-between gap-5">
-                              <div>
-                                <h4 className="font-semibold">{factor.label}</h4>
-                                <p className="mt-1 text-sm leading-5 text-slate-500">{factor.description}</p>
+                    <Tabs value={briefTab} onValueChange={setBriefTab} className="gap-0">
+                      <div className="overflow-x-auto border-b border-slate-100 px-5 sm:px-6 print:hidden">
+                        <TabsList variant="line" className="h-12 gap-5">
+                          <TabsTrigger value="briefing">Briefing</TabsTrigger>
+                          <TabsTrigger value="priority">Priority factors</TabsTrigger>
+                          <TabsTrigger value="evidence">Evidence <span className="rounded-full bg-slate-100 px-1.5 text-[0.7rem]">{selectedSources.length}</span></TabsTrigger>
+                        </TabsList>
+                      </div>
+
+                      <TabsContent value="briefing" className="p-5 sm:p-6">
+                        <div className="mb-6 rounded-xl border-l-4 border-blue-600 bg-blue-50/70 p-4">
+                          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-900">
+                            <Sparkles className="size-4" /> Source-grounded draft (FastAPI AI)
+                          </div>
+                          <Textarea
+                            value={selected.summary}
+                            onChange={(event) => updateSelected({ summary: event.target.value })}
+                            className="min-h-28 resize-y border-blue-100 bg-white/80 leading-6"
+                            aria-label="Editable agenda item summary"
+                          />
+                        </div>
+
+                        <div className="grid gap-6 lg:grid-cols-2">
+                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.keyFacts} />
+                          <BriefingList title="Historical context" icon={BookOpen} items={selected.historicalContext} empty="No historical context has been attached." />
+                          <EditableList
+                            title="Likely questions"
+                            icon={FileSearch}
+                            items={selected.likelyQuestions}
+                            onChange={(likelyQuestions) => updateSelected({ likelyQuestions })}
+                          />
+                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talkingPoints} />
+                        </div>
+
+                        <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                          <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
+                            <AlertTriangle className="size-4" /> Verification needed
+                          </div>
+                          <ul className="space-y-1.5 text-sm leading-5 text-amber-900/80">
+                            {selected.missingInformation?.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        </div>
+
+                        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5 print:hidden">
+                          <p className="max-w-xl text-xs leading-5 text-slate-500">
+                            Verified against FastAPI backend records.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>
+                            <Button variant="outline" onClick={downloadBriefing}><Download /> Export JSON</Button>
+                            <Button
+                              className="bg-blue-600 hover:bg-blue-700"
+                              onClick={() => {
+                                updateSelected({ reviewStatus: "Approved" })
+                                toast.success("Briefing marked approved.")
+                              }}
+                            >
+                              <Check /> Approve briefing
+                            </Button>
+                          </div>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="priority" className="p-5 sm:p-6">
+                        <div className="mb-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h3 className="font-semibold">Transparent rubric</h3>
+                            <p className="mt-1 text-sm leading-5 text-slate-500">Adjust the evidence-based factors.</p>
+                          </div>
+                          <div className="min-w-44">
+                            <div className="mb-2 flex items-center justify-between text-sm font-semibold">
+                              <span>{selectedPriority}</span><span>{selectedScore}/10</span>
+                            </div>
+                            <Progress value={selectedScore * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          {selected.factors.map((factor) => (
+                            <div key={factor.key} className="rounded-xl border border-slate-200 p-4">
+                              <div className="mb-4 flex items-start justify-between gap-5">
+                                <div>
+                                  <h4 className="font-semibold">{factor.label}</h4>
+                                  <p className="mt-1 text-sm leading-5 text-slate-500">{factor.description}</p>
+                                </div>
+                                <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.score}</div>
                               </div>
-                              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.score}</div>
+                              <div className="grid grid-cols-[1fr_auto] items-center gap-4">
+                                <Slider
+                                  min={0}
+                                  max={2}
+                                  step={1}
+                                  value={[factor.score]}
+                                  onValueChange={(value) => updateFactor(factor.key, value[0])}
+                                  aria-label={`${factor.label} score`}
+                                  className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600"
+                                />
+                                <span className="text-xs text-slate-500">0 · 1 · 2</span>
+                              </div>
                             </div>
-                            <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                              <Slider
-                                min={0}
-                                max={2}
-                                step={1}
-                                value={[factor.score]}
-                                onValueChange={(value) => updateFactor(factor.key, value[0])}
-                                aria-label={`${factor.label} score`}
-                                className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600"
-                              />
-                              <span className="text-xs text-slate-500">0 · 1 · 2</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </TabsContent>
+                          ))}
+                        </div>
+                      </TabsContent>
 
-                    <TabsContent value="evidence" className="p-5 sm:p-6">
-                      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="font-semibold">Supporting evidence</h3>
-                          <p className="mt-1 text-sm text-slate-500">Important claims should trace back to an approved source.</p>
+                      <TabsContent value="evidence" className="p-5 sm:p-6">
+                        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="font-semibold">Supporting evidence</h3>
+                            <p className="mt-1 text-sm text-slate-500">Important claims trace back to approved backend sources.</p>
+                          </div>
+                          <Button variant="outline" onClick={() => setSourceOpen(true)}><Plus /> Add source</Button>
                         </div>
-                        <Button variant="outline" onClick={() => setSourceOpen(true)}><Plus /> Add source</Button>
-                      </div>
-                      {selectedSources.length > 0 ? (
-                        <div className="space-y-3">
-                          {selectedSources.map((source) => <SourceCard key={source.id} source={source} />)}
-                        </div>
-                      ) : (
-                        <EmptySection>No supporting sources are attached yet. Add a source before treating the briefing as grounded.</EmptySection>
-                      )}
-                    </TabsContent>
-                  </Tabs>
-                </div>
+                        {selectedSources.length > 0 ? (
+                          <div className="space-y-3">
+                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} />)}
+                          </div>
+                        ) : (
+                          <EmptySection>No supporting sources attached yet.</EmptySection>
+                        )}
+                      </TabsContent>
+                    </Tabs>
+                  </div>
+                ) : (
+                  <EmptySection>Select an agenda item to view its briefing.</EmptySection>
+                )}
               </section>
             </div>
           )}
@@ -587,8 +548,8 @@ export default function App() {
               <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-blue-600">Evidence library</p>
-                  <h2 className="text-2xl font-semibold tracking-tight">Approved and candidate sources</h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">This demonstration uses official public records. Uploaded files remain in the current browser session.</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">Backend sources</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Official public records retrieved from FastAPI.</p>
                 </div>
                 <Button onClick={() => setSourceOpen(true)} className="bg-blue-600 hover:bg-blue-700"><Plus /> Add source</Button>
               </div>
@@ -601,52 +562,9 @@ export default function App() {
           {view === "evaluation" && (
             <section className="mx-auto max-w-6xl">
               <div className="mb-6">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-blue-600">Retrospective test</p>
-                <h2 className="text-2xl font-semibold tracking-tight">Agenda-only versus grounded briefing</h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">Demonstration values show the planned evaluation method. Replace them with measured results from repeated test cases.</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-blue-600">System Evaluation</p>
+                <h2 className="text-2xl font-semibold tracking-tight">FastAPI Integration Status</h2>
               </div>
-
-              <div className="grid gap-4 md:grid-cols-3">
-                <MetricCard label="Traceable claims" agenda="2 of 8" grounded="8 of 8" note="Claims linked to source evidence" />
-                <MetricCard label="Useful City sources" agenda="0" grounded="4" note="Records surfaced for reviewer inspection" />
-                <MetricCard label="Priority explanation" agenda="No" grounded="5 factors" note="Repeatable, reviewable rationale" />
-              </div>
-
-              <Card className="mt-6 border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg"><ClipboardCheck className="size-5 text-blue-600" /> Validation checklist</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[660px] border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-xs uppercase tracking-[0.08em] text-slate-500">
-                          <th className="px-3 py-3 font-semibold">Test</th>
-                          <th className="px-3 py-3 font-semibold">Method</th>
-                          <th className="px-3 py-3 font-semibold">Provisional pass condition</th>
-                          <th className="px-3 py-3 font-semibold">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {[
-                          ["Agenda extraction", "Compare parsed items with source PDF", "All selected item numbers and titles match", "Ready"],
-                          ["Evidence retrieval", "Check top results against reviewer-selected records", "Relevant evidence appears in top results", "Planned"],
-                          ["Citation coverage", "Audit factual briefing claims", "Every material factual claim has a source", "Ready"],
-                          ["Priority consistency", "Three reviewers score the same items", "Disagreements are documented and resolved", "Planned"],
-                          ["Usefulness", "Staff reviews generated briefing", "Threshold requires City confirmation", "Blocked"],
-                        ].map((row) => (
-                          <tr key={row[0]}>
-                            <td className="px-3 py-4 font-medium">{row[0]}</td>
-                            <td className="px-3 py-4 text-slate-600">{row[1]}</td>
-                            <td className="px-3 py-4 text-slate-600">{row[2]}</td>
-                            <td className="px-3 py-4"><Badge variant="outline" className={row[3] === "Blocked" ? "border-amber-200 bg-amber-50 text-amber-700" : row[3] === "Ready" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{row[3]}</Badge></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
             </section>
           )}
         </main>
@@ -656,7 +574,7 @@ export default function App() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Upload a Council agenda</DialogTitle>
-            <DialogDescription>Choose a text-based PDF or TXT file. Extracted items will be added as provisional drafts for manual review.</DialogDescription>
+            <DialogDescription>Choose a PDF or text file to send to FastAPI.</DialogDescription>
           </DialogHeader>
           <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-6 text-center">
             <Upload className="mx-auto mb-3 size-7 text-blue-600" />
@@ -664,17 +582,15 @@ export default function App() {
               type="file"
               accept=".pdf,.txt,.md"
               onChange={(event) => setAgendaFile(event.target.files?.[0] ?? null)}
-              aria-label="Choose agenda file"
               className="bg-white"
             />
-            <p className="mt-3 text-xs text-slate-500">Scanned PDFs may require OCR before upload.</p>
           </div>
           {agendaFile && <div className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800"><FileText className="size-4" /> {agendaFile.name}</div>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancel</Button>
             <Button onClick={processAgenda} disabled={processing} className="bg-blue-600 hover:bg-blue-700">
               {processing ? <Loader2 className="animate-spin" /> : <FileSearch />}
-              Extract agenda items
+              Upload to FastAPI
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -684,7 +600,7 @@ export default function App() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add supporting source</DialogTitle>
-            <DialogDescription>Attach a public record to Item {selected.number}. The file is processed only for this demonstration session.</DialogDescription>
+            <DialogDescription>Attach a public record to the backend.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <label className="block space-y-2 text-sm font-medium">
@@ -712,21 +628,11 @@ export default function App() {
   )
 }
 
-function BriefingList({
-  title,
-  icon: Icon,
-  items,
-  empty = "No information available.",
-}: {
-  title: string
-  icon: React.ComponentType<{ className?: string }>
-  items: string[]
-  empty?: string
-}) {
+function BriefingList({ title, icon: Icon, items, empty = "No information available." }: { title: string; icon: React.ComponentType<{ className?: string }>; items: string[]; empty?: string }) {
   return (
     <div>
       <h3 className="mb-3 flex items-center gap-2 font-semibold"><Icon className="size-4 text-blue-600" /> {title}</h3>
-      {items.length > 0 ? (
+      {items && items.length > 0 ? (
         <ul className="space-y-2.5 text-sm leading-6 text-slate-700">
           {items.map((item) => <li key={item} className="flex gap-2"><span className="mt-2 size-1.5 shrink-0 rounded-full bg-blue-500" /> <span>{item}</span></li>)}
         </ul>
@@ -735,25 +641,14 @@ function BriefingList({
   )
 }
 
-function EditableList({
-  title,
-  icon: Icon,
-  items,
-  onChange,
-}: {
-  title: string
-  icon: React.ComponentType<{ className?: string }>
-  items: string[]
-  onChange: (items: string[]) => void
-}) {
+function EditableList({ title, icon: Icon, items, onChange }: { title: string; icon: React.ComponentType<{ className?: string }>; items: string[]; onChange: (items: string[]) => void }) {
   return (
     <div>
       <h3 className="mb-3 flex items-center gap-2 font-semibold"><Icon className="size-4 text-blue-600" /> {title}</h3>
       <Textarea
-        value={items.join("\n")}
+        value={items ? items.join("\n") : ""}
         onChange={(event) => onChange(event.target.value.split("\n").filter(Boolean))}
         className="min-h-40 resize-y leading-6"
-        aria-label={`Editable ${title.toLowerCase()}`}
       />
     </div>
   )
@@ -772,33 +667,12 @@ function SourceCard({ source, expanded = false }: { source: SourceRecord; expand
         </div>
         {source.url && (
           <Button size="icon-sm" variant="ghost" asChild>
-            <a href={source.url} target="_blank" rel="noreferrer" aria-label={`Open ${source.title}`}><ExternalLink /></a>
+            <a href={source.url} target="_blank" rel="noreferrer"><ExternalLink /></a>
           </Button>
         )}
       </div>
       <p className={`mt-3 text-sm leading-6 text-slate-600 ${expanded ? "" : "line-clamp-3"}`}>{source.excerpt}</p>
       {source.fileName && <p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><FileText className="size-3.5" /> {source.fileName}</p>}
     </div>
-  )
-}
-
-function MetricCard({ label, agenda, grounded, note }: { label: string; agenda: string; grounded: string; note: string }) {
-  return (
-    <Card className="border-slate-200 shadow-sm">
-      <CardContent className="p-5">
-        <p className="text-sm font-semibold text-slate-600">{label}</p>
-        <div className="mt-5 grid grid-cols-2 gap-3">
-          <div className="rounded-lg bg-slate-100 p-3">
-            <p className="text-xs uppercase tracking-[0.08em] text-slate-500">Agenda only</p>
-            <p className="mt-1 text-xl font-semibold">{agenda}</p>
-          </div>
-          <div className="rounded-lg bg-blue-50 p-3">
-            <p className="text-xs uppercase tracking-[0.08em] text-blue-600">Grounded</p>
-            <p className="mt-1 text-xl font-semibold text-blue-800">{grounded}</p>
-          </div>
-        </div>
-        <p className="mt-4 text-xs leading-5 text-slate-500">{note}</p>
-      </CardContent>
-    </Card>
   )
 }

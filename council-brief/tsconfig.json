@@ -15,10 +15,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
+    //removed "baseUrl" to prevent conflicts with moduleResolution: "Bundler" in Vite
+    //path aliases now use explicitly relative routing ("./src/*").
     "paths": {
-      "@/*": ["src/*"]
-    },
+      "@/*": ["./src/*"]
+    }, 
     "types": ["vite/client"]
   },
   "include": ["src", "vite.config.ts"]
