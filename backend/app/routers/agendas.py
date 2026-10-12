@@ -13,15 +13,17 @@ from app.services.agenda_parser import (
     extract_text,
     parse_agenda_items,
 )
+from app.services.agenda_repository import (
+    AgendaRepositoryError,
+    get_agenda as get_stored_agenda,
+    save_agenda,
+)
 
 
 router = APIRouter(prefix="/api/v1", tags=["agendas"])
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md"}
-
-# Temporary storage until SQLite persistence is implemented.
-agenda_store: dict[str, AgendaResponse] = {}
 
 
 def error_response(
@@ -137,7 +139,16 @@ async def upload_agenda(
         items=items,
     )
 
-    agenda_store[agenda_id] = response
+    try:
+        save_agenda(response)
+    except AgendaRepositoryError:
+        return error_response(
+            503,
+            "STORAGE_UNAVAILABLE",
+            "The agenda could not be saved.",
+            "Try the upload again after storage service is restored.",
+        )
+
     return response
 
 
@@ -146,7 +157,15 @@ async def upload_agenda(
     response_model=AgendaResponse,
 )
 def get_agenda(agenda_id: str):
-    agenda = agenda_store.get(agenda_id)
+    try:
+        agenda = get_stored_agenda(agenda_id)
+    except AgendaRepositoryError:
+        return error_response(
+            503,
+            "STORAGE_UNAVAILABLE",
+            "The agenda could not be retrieved.",
+            "Try the request again after storage service is restored.",
+        )
 
     if agenda is None:
         return error_response(

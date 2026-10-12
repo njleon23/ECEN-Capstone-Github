@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers.agendas import router as agendas_router
 
+from app.routers.agendas import router as agendas_router
+from app.services.agenda_repository import initialize_database
+
+initialize_database()
 app = FastAPI(
     title="Council Brief API",
     version="0.1.0",
