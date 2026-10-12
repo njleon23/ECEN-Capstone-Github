@@ -1,50 +1,141 @@
 # Council Brief
 
-Council Brief is AICorps Team 3's front-end proof of concept for an AI-assisted City Council meeting-preparation system. The application demonstrates agenda ingestion, explainable preparation-priority scoring, source review, editable briefings, human approval, printing, and JSON export.
+Council Brief is AICorps Team 3's prototype for an AI-assisted City Council meeting-preparation system. The system is intended to help authorized City staff review meeting agendas, identify items requiring additional preparation, examine supporting sources, and create source-grounded briefing material.
 
-## Current scope
+## Current Capabilities
 
-This repository contains a functional static prototype. Agenda uploads and keyword-based priority scoring run in the browser. The detailed example briefings are representative sample data. The project does not yet connect to an LLM, a persistent database, or a live City data source.
+The project currently includes:
 
-## Run locally
+- A React and Vite frontend prototype
+- A FastAPI backend
+- Searchable PDF, TXT, and Markdown agenda uploads
+- Automatic extraction of numbered agenda items
+- SQLite persistence for agendas and agenda items
+- Agenda retrieval through a REST API
+- Structured error responses for invalid files
+- Automated backend tests
+- Interactive API documentation
 
-Install Node.js 22.13 or later and pnpm, then run:
+The frontend is not yet connected to the FastAPI backend. AI briefing generation, source retrieval, authentication, and live City data connectors are also still under development.
+
+## Repository Structure
+
+```text
+ECEN-Capstone-Github/
+├── backend/             FastAPI backend and automated tests
+├── council-brief/       React and Vite frontend
+├── .github/             GitHub Actions configuration
+└── README.md
+```
+
+## Frontend Setup
+
+Install Node.js 22.13 or later and pnpm.
+
+From the repository root:
 
 ```bash
+cd council-brief
 pnpm install
 pnpm dev
 ```
 
-Open the local address printed by Vite.
+Open the local address displayed by Vite, normally:
 
-## Build locally
+```text
+http://localhost:5173
+```
+
+To create and preview a production build:
 
 ```bash
 pnpm build
 pnpm preview
 ```
 
-The static production website is generated in `dist/`.
+## Backend Setup
 
-## Publish with GitHub Pages
+From the repository root:
 
-1. Push this project to a GitHub repository whose default branch is `main`.
-2. Open the repository on GitHub.
-3. Go to **Settings → Pages**.
-4. Under **Build and deployment**, choose **GitHub Actions** as the source.
-5. Open the **Actions** tab and monitor the `Deploy Council Brief to GitHub Pages` workflow.
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
-Every later push to `main` automatically rebuilds and republishes the site.
+Start the FastAPI development server:
 
-## Important files
+```bash
+python -m uvicorn app.main:app --reload
+```
 
-- `src/App.tsx` — main interface and browser-side application logic
-- `src/demo-data.ts` — representative agenda, briefing, and source data
-- `src/index.css` — global styles and print rules
-- `src/components/ui/` — reusable interface components
-- `examples/` — fictional agenda file for testing the upload workflow
-- `.github/workflows/deploy-pages.yml` — automatic GitHub Pages deployment
+The backend will be available at:
 
-## Future AI backend
+```text
+http://127.0.0.1:8000
+```
 
-GitHub Pages cannot safely hold an OpenAI API key or run server-side retrieval. A future AI version should send requests from this frontend to a separately hosted backend or serverless function. Keep all API keys in that backend's secret storage, never in this repository or browser code.
+Interactive API documentation is available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## Current API Endpoints
+
+```text
+GET  /api/v1/health
+POST /api/v1/agendas
+GET  /api/v1/agendas/{agenda_id}
+```
+
+The agenda-upload endpoint accepts searchable PDF, TXT, and Markdown files up to 25 MB.
+
+## Database Storage
+
+Agenda metadata and parsed agenda items are stored in SQLite.
+
+The default development database is:
+
+```text
+backend/data/council_brief.db
+```
+
+The database location can be changed with the `COUNCIL_BRIEF_DB_PATH` environment variable.
+
+Database files are excluded from Git and should not be committed.
+
+## Run the Backend Tests
+
+From the `backend` directory with the virtual environment activated:
+
+```bash
+python -m pytest -q
+```
+
+The current tests verify:
+
+- API health
+- Agenda upload and parsing
+- SQLite agenda persistence
+- Agenda retrieval
+- Rejection of unsupported file types
+
+## Current Limitations
+
+- The frontend and backend are not yet connected.
+- Scanned or image-only PDFs require OCR before upload.
+- Supporting-source upload and retrieval are not yet implemented.
+- AI-generated briefings and follow-up questions are not yet implemented.
+- Authentication and authorization are not yet implemented.
+- The backend currently runs only in the local development environment.
+- The application does not yet connect to live City data sources.
+
+## Security
+
+LLM or external-service API keys must remain on the backend. Secrets must never be stored in the React source code, committed to Git, or sent directly from the browser to an external AI provider.
+
+## Human Review Requirement
+
+All generated analysis and briefing material must remain in draft form until reviewed by an authorized person. The system is intended to support City staff preparation and does not make policy decisions or voting recommendations.

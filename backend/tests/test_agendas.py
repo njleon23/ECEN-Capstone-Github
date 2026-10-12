@@ -1,9 +1,19 @@
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.main import app
 
+TEST_DATABASE_DIRECTORY = tempfile.TemporaryDirectory()
+TEST_DATABASE_PATH = (
+    Path(TEST_DATABASE_DIRECTORY.name) / "council_brief_test.db"
+)
+
+os.environ["COUNCIL_BRIEF_DB_PATH"] = str(TEST_DATABASE_PATH)
+
+from app.main import app
+from app.services.agenda_repository import get_agenda
 
 client = TestClient(app)
 
@@ -58,6 +68,12 @@ def test_upload_and_retrieve_agenda():
 
     assert retrieval_response.status_code == 200
     assert retrieval_response.json()["agenda_id"] == agenda_id
+    stored_agenda = get_agenda(agenda_id)
+
+    assert TEST_DATABASE_PATH.exists()
+    assert stored_agenda is not None
+    assert stored_agenda.agenda_id == agenda_id
+    assert len(stored_agenda.items) == 15
 
 
 def test_reject_unsupported_file():
