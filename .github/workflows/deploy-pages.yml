@@ -17,9 +17,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -29,19 +30,19 @@ jobs:
       - name: Install pnpm
         run: npm install --global pnpm@11.25.0
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir council-brief install --frozen-lockfile
 
-      - name: Build static website
-        run: pnpm build
+      - name: Build frontend
+        run: pnpm --dir council-brief build
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload static website
+      - name: Upload frontend artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ./dist
+          path: ./council-brief/dist
 
   deploy:
     environment:
@@ -49,6 +50,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
