@@ -206,3 +206,26 @@ def get_agenda(agenda_id: str) -> AgendaResponse | None:
         warnings=json.loads(agenda_row["warnings_json"]),
         items=items,
     )
+
+
+def list_agendas() -> list[AgendaResponse]:
+    initialize_database()
+
+    with database_connection() as connection:
+        agenda_rows = connection.execute(
+            """
+            SELECT agenda_id
+            FROM agendas
+            ORDER BY uploaded_at DESC
+            """
+        ).fetchall()
+
+    agendas: list[AgendaResponse] = []
+
+    for row in agenda_rows:
+        agenda = get_agenda(row["agenda_id"])
+
+        if agenda is not None:
+            agendas.append(agenda)
+
+    return agendas

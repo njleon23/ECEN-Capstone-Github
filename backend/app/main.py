@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers.agendas import router as agendas_router
 from app.services.agenda_repository import initialize_database
+from app.routers.sources import router as sources_router
 
 initialize_database()
 app = FastAPI(
@@ -22,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(agendas_router)
+app.include_router(sources_router)
 
 
 @app.get("/api/v1/health")
