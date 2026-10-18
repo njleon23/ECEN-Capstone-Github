@@ -90,3 +90,32 @@ def test_reject_unsupported_file():
 
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+def test_list_agendas():
+    with SAMPLE_AGENDA.open("rb") as agenda_file:
+        upload_response = client.post(
+            "/api/v1/agendas",
+            files={
+                "file": (
+                    SAMPLE_AGENDA.name,
+                    agenda_file,
+                    "text/plain",
+                )
+            },
+            data={
+                "meeting_title": "Agenda Listing Test",
+                "meeting_date": "2026-10-08",
+            },
+        )
+
+    assert upload_response.status_code == 201
+
+    uploaded_agenda = upload_response.json()
+    response = client.get("/api/v1/agendas")
+
+    assert response.status_code == 200
+
+    agendas = response.json()
+    agenda_ids = [agenda["agenda_id"] for agenda in agendas]
+
+    assert uploaded_agenda["agenda_id"] in agenda_ids
