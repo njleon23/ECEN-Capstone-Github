@@ -1,57 +1,70 @@
 # Council Brief
 
-Council Brief is AICorps Team 3's prototype for an AI-assisted City Council meeting-preparation system. The system is intended to help authorized City staff review meeting agendas, identify items requiring additional preparation, examine supporting sources, and create source-grounded briefing material.
+Council Brief is AICorps Team 3's prototype for an AI-assisted City Council meeting-preparation system. It is intended to help authorized City staff review meeting agendas, organize supporting public sources, identify items requiring additional preparation, and eventually produce source-grounded briefing material.
+
+The system is currently developed under documented assumptions because final City requirements and data access have not yet been confirmed.
 
 ## Current Capabilities
 
-The project currently includes:
+The current prototype includes:
 
-- A React and Vite frontend prototype
+- A React and Vite web dashboard
 - A FastAPI backend
+- Local frontend-to-backend integration
 - Searchable PDF, TXT, and Markdown agenda uploads
 - Automatic extraction of numbered agenda items
-- SQLite persistence for agendas and agenda items
-- Agenda retrieval through a REST API
-- Structured error responses for invalid files
+- SQLite persistence for agendas, agenda items, and source records
+- Agenda listing and individual agenda retrieval
+- Supporting-source registration and retrieval
+- Structured API error responses
+- Backend health-status reporting
+- An AI provider and data-model foundation
 - Automated backend tests
-- Interactive API documentation
+- Interactive FastAPI documentation
 
-The frontend is not yet connected to the FastAPI backend. AI briefing generation, source retrieval, authentication, and live City data connectors are also still under development.
+## System Architecture
+
+The current prototype uses the following data flow:
+
+```text
+React Dashboard
+      |
+      v
+FastAPI REST API
+      |
+      +-- Agenda Parser
+      +-- Agenda Repository
+      +-- Source Repository
+      +-- AI Provider Foundation
+      |
+      v
+SQLite Database
+```
+
+The browser communicates only with the FastAPI backend. Future LLM credentials and external-service credentials will remain server-side.
 
 ## Repository Structure
 
 ```text
 ECEN-Capstone-Github/
-├── backend/             FastAPI backend and automated tests
+├── backend/             FastAPI backend, SQLite repositories, and tests
 ├── council-brief/       React and Vite frontend
-├── .github/             GitHub Actions configuration
+├── .github/             GitHub Actions and Pages deployment
 └── README.md
 ```
 
-## Frontend Setup
+## Requirements
 
-Install Node.js 22.13 or later and pnpm.
+### Frontend
 
-From the repository root:
+- Node.js 22.13 or later
+- npm
+- pnpm 11.25.0, invoked directly or through `npx`
 
-```bash
-cd council-brief
-pnpm install
-pnpm dev
-```
+### Backend
 
-Open the local address displayed by Vite, normally:
-
-```text
-http://localhost:5173
-```
-
-To create and preview a production build:
-
-```bash
-pnpm build
-pnpm preview
-```
+- Python 3.12 or later
+- Python virtual environment support
 
 ## Backend Setup
 
@@ -82,19 +95,52 @@ Interactive API documentation is available at:
 http://127.0.0.1:8000/docs
 ```
 
+## Frontend Setup
+
+Open a second terminal and run:
+
+```bash
+cd council-brief
+npx --yes pnpm@11.25.0 install
+npx --yes pnpm@11.25.0 dev
+```
+
+Open the local address displayed by Vite, normally:
+
+```text
+http://localhost:5173
+```
+
+The frontend defaults to the following backend API address:
+
+```text
+http://localhost:8000/api/v1
+```
+
+A different backend address can be supplied using the `VITE_API_BASE_URL` environment variable.
+
+To create a production frontend build:
+
+```bash
+npx --yes pnpm@11.25.0 build
+```
+
 ## Current API Endpoints
 
 ```text
 GET  /api/v1/health
 POST /api/v1/agendas
+GET  /api/v1/agendas
 GET  /api/v1/agendas/{agenda_id}
+POST /api/v1/sources
+GET  /api/v1/sources
 ```
 
 The agenda-upload endpoint accepts searchable PDF, TXT, and Markdown files up to 25 MB.
 
 ## Database Storage
 
-Agenda metadata and parsed agenda items are stored in SQLite.
+Agenda metadata, agenda items, and source records are stored in SQLite.
 
 The default development database is:
 
@@ -102,11 +148,15 @@ The default development database is:
 backend/data/council_brief.db
 ```
 
-The database location can be changed with the `COUNCIL_BRIEF_DB_PATH` environment variable.
+A different database location can be configured with:
 
-Database files are excluded from Git and should not be committed.
+```text
+COUNCIL_BRIEF_DB_PATH
+```
 
-## Run the Backend Tests
+Database files are excluded from Git and must not be committed.
+
+## Running Backend Tests
 
 From the `backend` directory with the virtual environment activated:
 
@@ -114,28 +164,84 @@ From the `backend` directory with the virtual environment activated:
 python -m pytest -q
 ```
 
-The current tests verify:
+The current automated tests cover:
 
-- API health
+- API health reporting
 - Agenda upload and parsing
+- Agenda listing and individual retrieval
 - SQLite agenda persistence
-- Agenda retrieval
-- Rejection of unsupported file types
+- Source creation and listing
+- Source-type validation
+- Unsupported agenda-file rejection
+- AI provider and model-foundation behavior
+
+## Current Demonstration Workflow
+
+The current working demonstration supports the following sequence:
+
+1. Start the FastAPI backend.
+2. Start the React frontend.
+3. Upload a searchable agenda file.
+4. Parse the agenda into numbered items.
+5. Store the agenda and extracted items in SQLite.
+6. Retrieve and display persisted agenda items in the dashboard.
+7. Register a supporting-source record.
+8. Retrieve and display the source in the Source Library.
 
 ## Current Limitations
 
-- The frontend and backend are not yet connected.
-- Scanned or image-only PDFs require OCR before upload.
-- Supporting-source upload and retrieval are not yet implemented.
-- AI-generated briefings and follow-up questions are not yet implemented.
-- Authentication and authorization are not yet implemented.
-- The backend currently runs only in the local development environment.
-- The application does not yet connect to live City data sources.
+The following capabilities are still under development:
+
+- Meetings are not yet separated in the frontend; items from all stored agendas are currently combined.
+- Source records are not yet persistently attached to individual agenda items.
+- Original supporting-source files are not yet preserved by the backend.
+- Passage-level retrieval and citation generation are not yet implemented.
+- The AI analysis foundation is not yet connected to a live analysis endpoint.
+- Source-grounded briefing generation is not yet implemented end-to-end.
+- The documented 0-to-10 preparation-priority score is not yet generated by the backend.
+- Review, approval, revision history, and feedback are not yet persisted.
+- Authentication and role-based authorization are not yet implemented.
+- The FastAPI backend currently runs only in a local development environment.
+- Live City data connectors and social-media ingestion are not part of the current baseline.
+
+## Git Workflow
+
+Development changes should not be committed directly to `main`.
+
+The team uses the following workflow:
+
+```text
+Feature branch
+      |
+      v
+integration/mvp
+      |
+      v
+main
+```
+
+Create feature branches from the latest `integration/mvp` branch:
+
+```bash
+git switch integration/mvp
+git pull --ff-only origin integration/mvp
+git switch -c feature/short-description
+```
+
+After implementation and testing, push the branch and open a pull request targeting `integration/mvp`. The integration branch is merged into `main` after the combined system is tested.
+
+## GitHub Pages
+
+GitHub Pages hosts only the static React frontend. It cannot run the FastAPI backend or SQLite database.
+
+Full functionality currently requires running the frontend and backend locally. A deployed backend URL will be required before the hosted Pages interface can provide complete functionality.
 
 ## Security
 
-LLM or external-service API keys must remain on the backend. Secrets must never be stored in the React source code, committed to Git, or sent directly from the browser to an external AI provider.
+LLM and external-service API keys must remain on the backend. Secrets must never be stored in React source code, committed to Git, or sent directly from the browser to an external AI provider.
+
+Only public or explicitly team-approved test records should be used until the City authorizes additional data.
 
 ## Human Review Requirement
 
-All generated analysis and briefing material must remain in draft form until reviewed by an authorized person. The system is intended to support City staff preparation and does not make policy decisions or voting recommendations.
+All generated analysis and briefing material must remain in draft form until reviewed by an authorized person. Council Brief is intended to support meeting preparation and does not make policy decisions, voting recommendations, or automatically publish official communications.
