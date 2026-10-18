@@ -91,6 +91,7 @@ def test_reject_unsupported_file():
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
 
+
 def test_list_agendas():
     with SAMPLE_AGENDA.open("rb") as agenda_file:
         upload_response = client.post(
@@ -119,6 +120,7 @@ def test_list_agendas():
     agenda_ids = [agenda["agenda_id"] for agenda in agendas]
 
     assert uploaded_agenda["agenda_id"] in agenda_ids
+
 
 def test_create_and_list_sources():
     source_payload = {

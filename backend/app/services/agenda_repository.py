@@ -207,6 +207,7 @@ def get_agenda(agenda_id: str) -> AgendaResponse | None:
         items=items,
     )
 
+
 def list_agendas() -> list[AgendaResponse]:
     initialize_database()
 

@@ -32,6 +32,7 @@ class AgendaResponse(BaseModel):
     warnings: list[str]
     items: list[AgendaItem]
 
+
 class SourceCreate(BaseModel):
     title: str = Field(min_length=1)
     source_type: Literal[
