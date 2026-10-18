@@ -32,6 +32,33 @@ class AgendaResponse(BaseModel):
     warnings: list[str]
     items: list[AgendaItem]
 
+class SourceCreate(BaseModel):
+    title: str = Field(min_length=1)
+    source_type: Literal[
+        "agenda",
+        "minutes",
+        "transcript",
+        "budget",
+        "checkbook",
+        "vendor",
+        "contract",
+        "survey",
+        "comment",
+        "news",
+        "public_discussion",
+        "other",
+    ] = "other"
+    text: str = ""
+    source_date: date | None = None
+    source_url: str | None = None
+    file_name: str | None = None
+    approved: bool = False
+
+
+class SourceResponse(SourceCreate):
+    source_id: str
+    ingested_at: datetime
+
 
 class ErrorDetail(BaseModel):
     code: str
