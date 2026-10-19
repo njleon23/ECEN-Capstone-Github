@@ -1,0 +1,48 @@
+name: council-brief
+
+services:
+  db:
+    image: postgres:18
+    container_name: council-brief-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - council_brief_pgdata:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  test-db:
+    image: postgres:18
+    container_name: council-brief-test-db
+    environment:
+      POSTGRES_DB: council_brief_test
+      POSTGRES_USER: council_brief_test
+      POSTGRES_PASSWORD: council_brief_test
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - council_brief_test_pgdata:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  council_brief_pgdata:
+  council_brief_test_pgdata:
