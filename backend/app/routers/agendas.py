@@ -13,9 +13,12 @@ from app.services.agenda_parser import (
     extract_text,
     parse_agenda_items,
 )
+
+
 from app.services.agenda_repository import (
     AgendaRepositoryError,
     get_agenda as get_stored_agenda,
+    list_agendas as list_stored_agendas,
     save_agenda,
 )
 
@@ -150,6 +153,21 @@ async def upload_agenda(
         )
 
     return response
+
+@router.get(
+    "/agendas",
+    response_model=list[AgendaResponse],
+)
+def list_agendas():
+    try:
+        return list_stored_agendas()
+    except AgendaRepositoryError:
+        return error_response(
+            503,
+            "STORAGE_UNAVAILABLE",
+            "The agendas could not be retrieved.",
+            "Try the request again after storage service is restored.",
+        )
 
 
 @router.get(

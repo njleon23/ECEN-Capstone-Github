@@ -177,7 +177,7 @@ export default function App() {
     setProcessing(true)
     try {
       // Send file to FastAPI backend upload endpoint
-      const responseData = await uploadAgendaPdf(agendaFile)
+      await uploadAgendaPdf(agendaFile)
       // Refresh items list from backend after processing
       const updatedAgendas = await fetchAgendas()
       setItems(updatedAgendas)
