@@ -47,8 +47,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
 
 // Import our FastAPI backend service layer instead of static mock data
-import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api" //fetchsoures and addsourcerecord will help us w backend
-import { AgendaItem, SourceRecord } from "./api" //fixed the previous error cs i deleted demodata
+import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api"
+import { AgendaItem, SourceRecord } from "./api"
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -107,6 +107,8 @@ function EmptySection({ children }: { children: React.ReactNode }) {
 export default function App() {
   // State management for agendas and sources fetched from FastAPI
   const [items, setItems] = useState<AgendaItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceRecord[]>([])
   const [selectedId, setSelectedId] = useState<string>("")
   const [view, setView] = useState<View>("meeting")
@@ -123,6 +125,8 @@ export default function App() {
   // Fetch live agendas and sources from FastAPI backend on initial component mount
   useEffect(() => {
     async function loadBackendData() {
+      setIsLoading(true)
+      setError(null)
       try {
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
@@ -132,13 +136,45 @@ export default function App() {
         if (sourceData) {
           setSources(sourceData)
         }
-      } catch (error) {
-        console.error("Failed to connect to FastAPI backend:", error)
-        toast.error("Could not connect to FastAPI backend on port 8000. Check server status.")
+      } catch (err) {
+        console.error("Failed to connect to FastAPI backend:", err)
+        setError("Could not connect to the backend database. The Python server may be offline.")
+        toast.error("Could not connect to FastAPI backend on port 8000.")
+      } finally {
+        setIsLoading(false)
       }
     }
     loadBackendData()
   }, [])
+
+  // === TODO: DEMO ONLY - DELETE THIS FUNCTION WHEN BACKEND IS CONNECTED ===
+  const loadMockData = () => {
+    const mockItem = {
+      id: "mock-1",
+      number: "8.1",
+      title: "Approve vendor contract for traffic analysis",
+      department: "Public Works",
+      itemType: "Regular Agenda",
+      reviewStatus: "Needs review",
+      summary: "Example summary based on Quan's planned backend schema. The project was competitively bid.",
+      keyFacts: ["Project cost: $1.2M", "Traffic impact expected on HWY 6"],
+      historicalContext: [],
+      likelyQuestions: ["Why was this vendor selected?", "How long will lane closures last?"],
+      talkingPoints: ["The project was competitively bid.", "Funds are allocated in the FY26 budget."],
+      missingInformation: ["Exact timeline for lane closures"],
+      factors: [
+        { key: "f1", label: "Financial Impact", description: "Cost exceeding $1M", score: 2 },
+        { key: "f2", label: "Public Interest", description: "High traffic area", score: 2 }
+      ],
+      sourceIds: []
+    }
+    
+    setItems([mockItem as any])
+    setSelectedId("mock-1")
+    setError(null) 
+    toast.success("Loaded demo mock data.")
+  }
+  // === END DEMO ONLY ===
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
   const selectedScore = selected ? scoreFor(selected) : 0
@@ -357,7 +393,52 @@ export default function App() {
                     </div>
                   </div>
                   <div className="max-h-[calc(100vh-260px)] overflow-y-auto p-2">
-                    {filteredItems.map((item) => {
+                    
+                    {isLoading && (
+                      <div className="flex flex-col items-center justify-center p-10 text-slate-500">
+                        <Loader2 className="mb-3 size-6 animate-spin text-blue-600" />
+                        <p className="text-sm font-medium">Loading agenda items...</p>
+                      </div>
+                    )}
+
+                    {error && !isLoading && (
+                      <div className="mx-4 my-8 flex flex-col items-center justify-center rounded-xl border border-rose-200 bg-rose-50 p-6 text-center text-rose-700">
+                        <AlertTriangle className="mb-2 size-6" />
+                        <p className="font-semibold">Connection Failed</p>
+                        <p className="mt-1 text-sm">{error}</p>
+                        
+                        {/* === TODO: DEMO ONLY - DELETE THIS BUTTON WHEN BACKEND IS CONNECTED === */}
+                        <Button 
+                          onClick={loadMockData} 
+                          variant="outline" 
+                          className="mt-4 border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                        >
+                          <Sparkles className="mr-2 size-4" /> Load Demo Data
+                        </Button>
+                        {/* === END DEMO ONLY === */}
+
+                      </div>
+                    )}
+
+                    {!isLoading && !error && items.length === 0 && (
+                      <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500">
+                        <p className="font-medium text-slate-700">No agendas found.</p>
+                        <p className="mt-1 text-sm">Please upload a sample agenda to begin your review.</p>
+
+                        {/* === TODO: DEMO ONLY - DELETE THIS BUTTON WHEN BACKEND IS CONNECTED === */}
+                        <Button 
+                          onClick={loadMockData} 
+                          variant="outline" 
+                          className="mt-4 border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        >
+                          <Sparkles className="mr-2 size-4 text-blue-600" /> Load Demo Data
+                        </Button>
+                        {/* === END DEMO ONLY === */}
+
+                      </div>
+                    )}
+
+                    {!isLoading && !error && filteredItems.map((item) => {
                       const score = scoreFor(item)
                       const priority = priorityFor(score)
                       const active = selected && item.id === selected.id
@@ -388,7 +469,7 @@ export default function App() {
               </section>
 
               <section className="min-w-0">
-                {selected ? (
+                {selected && !error && !isLoading ? (
                   <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-100 p-5 sm:p-6">
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -457,22 +538,46 @@ export default function App() {
                           </ul>
                         </div>
 
-                        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5 print:hidden">
-                          <p className="max-w-xl text-xs leading-5 text-slate-500">
-                            Verified against FastAPI backend records.
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>
-                            <Button variant="outline" onClick={downloadBriefing}><Download /> Export JSON</Button>
-                            <Button
-                              className="bg-blue-600 hover:bg-blue-700"
-                              onClick={() => {
-                                updateSelected({ reviewStatus: "Approved" })
-                                toast.success("Briefing marked approved.")
-                              }}
-                            >
-                              <Check /> Approve briefing
-                            </Button>
+                        <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 print:hidden">
+                          <h3 className="mb-4 text-sm font-semibold text-slate-900">Staff Review & Sign-off</h3>
+                          
+                          <div className="mb-5">
+                            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                              Reviewer Comments
+                            </label>
+                            <Textarea
+                              placeholder="Add internal notes, concerns, or requested edits here..."
+                              className="min-h-20 resize-y border-slate-200 bg-white text-sm"
+                            />
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+                            <div className="flex gap-2">
+                              <Button variant="outline" onClick={() => window.print()}><Printer className="mr-2 size-4" /> Print</Button>
+                              <Button variant="outline" onClick={downloadBriefing}><Download className="mr-2 size-4" /> Export</Button>
+                            </div>
+                            
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="outline" 
+                                className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                                onClick={() => {
+                                  updateSelected({ reviewStatus: "Needs review" })
+                                  toast.error("Flagged for further review.")
+                                }}
+                              >
+                                Reject / Flag
+                              </Button>
+                              <Button
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                onClick={() => {
+                                  updateSelected({ reviewStatus: "Approved" })
+                                  toast.success("Briefing marked as approved!")
+                                }}
+                              >
+                                <Check className="mr-2 size-4" /> Approve Briefing
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </TabsContent>
@@ -537,7 +642,9 @@ export default function App() {
                     </Tabs>
                   </div>
                 ) : (
-                  <EmptySection>Select an agenda item to view its briefing.</EmptySection>
+                  <EmptySection>
+                    {error ? "Backend is currently unavailable." : "Select an agenda item to view its briefing."}
+                  </EmptySection>
                 )}
               </section>
             </div>
