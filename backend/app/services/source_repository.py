@@ -66,3 +66,38 @@ def list_sources() -> list[SourceResponse]:
         raise SourceRepositoryError(
             "The sources could not be retrieved."
         ) from error
+
+def get_source(source_id: str) -> SourceResponse | None:
+    try:
+        with SessionLocal() as database:
+            source = database.get(SourceRecord, source_id)
+
+            if source is None:
+                return None
+
+            return source_record_to_response(source)
+    except SQLAlchemyError as error:
+        raise SourceRepositoryError(
+            "The source could not be retrieved."
+        ) from error
+
+
+def set_source_approval(
+    source_id: str,
+    approved: bool,
+) -> SourceResponse | None:
+    try:
+        with SessionLocal.begin() as database:
+            source = database.get(SourceRecord, source_id)
+
+            if source is None:
+                return None
+
+            source.approved = approved
+            database.flush()
+
+            return source_record_to_response(source)
+    except SQLAlchemyError as error:
+        raise SourceRepositoryError(
+            "The source approval state could not be updated."
+        ) from error

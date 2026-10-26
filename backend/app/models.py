@@ -61,6 +61,22 @@ class SourceResponse(SourceCreate):
     ingested_at: datetime
 
 
+class SourceApprovalUpdate(BaseModel):
+    approved: bool
+
+
+class SourceAttachmentResponse(BaseModel):
+    item_id: str
+    source_id: str
+    created: bool
+
+
+class SourceDetachmentResponse(BaseModel):
+    item_id: str
+    source_id: str
+    removed: bool
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str

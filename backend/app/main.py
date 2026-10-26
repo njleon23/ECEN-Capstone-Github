@@ -8,6 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers.agendas import router as agendas_router
 from app.routers.sources import router as sources_router
 
+from app.routers.source_associations import (
+    router as source_associations_router,
+)
+
 
 app = FastAPI(
     title="Council Brief API",
@@ -27,6 +31,7 @@ app.add_middleware(
 
 app.include_router(agendas_router)
 app.include_router(sources_router)
+app.include_router(source_associations_router)
 
 
 @app.get("/api/v1/health")
