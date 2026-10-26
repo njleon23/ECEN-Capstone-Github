@@ -6,6 +6,10 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.agenda_repository import get_agenda
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from app import main as main_module
+
 client = TestClient(app)
 
 SAMPLE_AGENDA = (
@@ -21,7 +25,7 @@ def test_health_endpoint():
 
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
-
+    assert response.json()["database"] == "connected"
 
 def test_upload_and_retrieve_agenda():
     with SAMPLE_AGENDA.open("rb") as agenda_file:
@@ -159,3 +163,20 @@ def test_reject_invalid_source_type():
     )
 
     assert response.status_code == 422
+
+
+def test_health_endpoint_reports_database_failure(monkeypatch):
+    def fail_connection():
+        raise SQLAlchemyError("Database unavailable")
+
+    monkeypatch.setattr(
+        main_module.engine,
+        "connect",
+        fail_connection,
+    )
+
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "unhealthy"
+    assert response.json()["database"] == "unavailable"
