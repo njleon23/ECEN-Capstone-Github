@@ -12,6 +12,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -85,6 +86,12 @@ class AgendaItemRecord(Base):
         back_populates="items",
     )
 
+    source_links: Mapped[list[AgendaItemSourceRecord]] = relationship(
+        back_populates="agenda_item",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class SourceRecord(Base):
     __tablename__ = "sources"
@@ -120,4 +127,39 @@ class SourceRecord(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+    )
+    agenda_item_links: Mapped[list[AgendaItemSourceRecord]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+class AgendaItemSourceRecord(Base):
+    __tablename__ = "agenda_item_sources"
+    __table_args__ = (
+        Index(
+            "idx_agenda_item_sources_source_id",
+            "source_id",
+        ),
+    )
+
+    item_id: Mapped[str] = mapped_column(
+        ForeignKey("agenda_items.item_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("sources.source_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    attached_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    agenda_item: Mapped[AgendaItemRecord] = relationship(
+        back_populates="source_links",
+    )
+    source: Mapped[SourceRecord] = relationship(
+        back_populates="agenda_item_links",
     )
