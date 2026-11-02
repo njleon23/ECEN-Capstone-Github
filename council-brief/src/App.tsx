@@ -52,20 +52,13 @@ import { AgendaItem, SourceRecord } from "./api"
 
 type View = "meeting" | "sources" | "evaluation"
 
-function scoreFor(item: AgendaItem) {
-  return item.factors.reduce((total, factor) => total + factor.score, 0)
-}
+// REMOVED: scoreFor and priorityFor local calculations per Quan's API update
 
-function priorityFor(score: number) {
-  if (score >= 7) return "High"
-  if (score >= 4) return "Moderate"
-  return "Low"
-}
-
-function priorityStyle(priority: string) {
+function priorityStyle(priority: string | null) {
   if (priority === "High") return "border-rose-200 bg-rose-50 text-rose-700"
   if (priority === "Moderate") return "border-amber-200 bg-amber-50 text-amber-700"
-  return "border-emerald-200 bg-emerald-50 text-emerald-700"
+  if (priority === "Low") return "border-emerald-200 bg-emerald-50 text-emerald-700"
+  return "border-slate-200 bg-slate-50 text-slate-600" // Fallback for "Not scored"
 }
 
 function statusStyle(status: AgendaItem["reviewStatus"]) {
@@ -105,8 +98,7 @@ function EmptySection({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  // State management for agendas and sources fetched from FastAPI
-  const [items, setItems] = useState<AgendaItem[]>([])
+  const [items, setItems] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sources, setSources] = useState<SourceRecord[]>([])
@@ -122,7 +114,6 @@ export default function App() {
   const [sourceTitle, setSourceTitle] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
 
-  // Fetch live agendas and sources from FastAPI backend on initial component mount
   useEffect(() => {
     async function loadBackendData() {
       setIsLoading(true)
@@ -157,28 +148,44 @@ export default function App() {
       itemType: "Regular Agenda",
       reviewStatus: "Needs review",
       summary: "Example summary based on Quan's planned backend schema. The project was competitively bid.",
-      keyFacts: ["Project cost: $1.2M", "Traffic impact expected on HWY 6"],
-      historicalContext: [],
-      likelyQuestions: ["Why was this vendor selected?", "How long will lane closures last?"],
-      talkingPoints: ["The project was competitively bid.", "Funds are allocated in the FY26 budget."],
-      missingInformation: ["Exact timeline for lane closures"],
-      factors: [
-        { key: "f1", label: "Financial Impact", description: "Cost exceeding $1M", score: 2 },
-        { key: "f2", label: "Public Interest", description: "High traffic area", score: 2 }
+      
+      // UPDATED SCHEMA FROM QUAN: Backend provides score and category directly
+      score: 4.5,
+      category: "Moderate", 
+      
+      // UPDATED SCHEMA FROM QUAN: Objects with text, support_level, and citations
+      key_facts: [
+        { text: "Project cost: $1.2M", support_level: "High", citations: [] },
+        { text: "Traffic impact expected on HWY 6", support_level: "High", citations: [] }
       ],
+      anticipated_questions: [
+        { text: "Why was this vendor selected?", support_level: "Moderate", citations: [] },
+        { text: "How long will lane closures last?", support_level: "Moderate", citations: [] }
+      ],
+      talking_points: [
+        { text: "The project was competitively bid.", support_level: "High", citations: [] },
+        { text: "Funds are allocated in the FY26 budget.", support_level: "High", citations: [] }
+      ],
+      missingInformation: ["Exact timeline for lane closures"],
+      
+      // UPDATED SCHEMA FROM QUAN: priority.factors with label, explanation, points
+      priority: {
+        factors: [
+          { key: "f1", label: "Financial Impact", explanation: "Cost exceeding $1M", points: 2 },
+          { key: "f2", label: "Public Interest", explanation: "High traffic area", points: 2.5 }
+        ]
+      },
       sourceIds: []
     }
     
     setItems([mockItem as any])
     setSelectedId("mock-1")
     setError(null) 
-    toast.success("Loaded demo mock data.")
+    toast.success("Loaded updated demo mock data.")
   }
   // === END DEMO ONLY ===
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
-  const selectedScore = selected ? scoreFor(selected) : 0
-  const selectedPriority = priorityFor(selectedScore)
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
 
   const filteredItems = useMemo(() => {
@@ -189,22 +196,12 @@ export default function App() {
     )
   }, [items, query])
 
-  const updateSelected = (update: Partial<AgendaItem>) => {
+  const updateSelected = (update: Partial<any>) => {
     setItems((current) =>
       current.map((item) => (item.id === selected.id ? { ...item, ...update } : item)),
     )
   }
 
-  const updateFactor = (key: string, score: number) => {
-    if (!selected) return
-    updateSelected({
-      factors: selected.factors.map((factor) =>
-        factor.key === key ? { ...factor, score } : factor,
-      ),
-    })
-  }
-
-  // Handle Agenda Upload via FastAPI endpoint
   const processAgenda = async () => {
     if (!agendaFile) {
       toast.error("Choose an agenda PDF or text file first.")
@@ -212,9 +209,7 @@ export default function App() {
     }
     setProcessing(true)
     try {
-      // Send file to FastAPI backend upload endpoint
       await uploadAgendaPdf(agendaFile)
-      // Refresh items list from backend after processing
       const updatedAgendas = await fetchAgendas()
       setItems(updatedAgendas)
       if (updatedAgendas.length > 0) {
@@ -232,7 +227,6 @@ export default function App() {
     }
   }
 
-  // Handle Source Addition via FastAPI endpoint
   const addSource = async () => {
     if (!sourceFile && !sourceTitle.trim()) {
       toast.error("Add a title or choose a source document.")
@@ -250,7 +244,6 @@ export default function App() {
         fileName: sourceFile?.name,
       }
 
-      // Save source via FastAPI endpoint
       const savedSource = await addSourceRecord(newSource)
       setSources((current) => [savedSource, ...current])
       if (selected) {
@@ -274,7 +267,7 @@ export default function App() {
     const payload = {
       meeting: "College Station City Council — August 27, 2026",
       agendaItem: selected,
-      preparationPriority: { score: selectedScore, category: selectedPriority },
+      preparationPriority: { score: selected.score, category: selected.category },
       sources: selectedSources,
       generatedAt: new Date().toISOString(),
       disclaimer: "Prototype output. Human verification is required before use.",
@@ -369,7 +362,7 @@ export default function App() {
                 <div className="mb-4 grid grid-cols-3 gap-2">
                   {[
                     { label: "Agenda items", value: items.length },
-                    { label: "High priority", value: items.filter((item) => priorityFor(scoreFor(item)) === "High").length },
+                    { label: "High priority", value: items.filter((item) => item.category === "High").length },
                     { label: "Approved", value: items.filter((item) => item.reviewStatus === "Approved").length },
                   ].map((stat) => (
                     <div key={stat.label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -407,7 +400,6 @@ export default function App() {
                         <p className="font-semibold">Connection Failed</p>
                         <p className="mt-1 text-sm">{error}</p>
                         
-                        {/* === TODO: DEMO ONLY - DELETE THIS BUTTON WHEN BACKEND IS CONNECTED === */}
                         <Button 
                           onClick={loadMockData} 
                           variant="outline" 
@@ -415,8 +407,6 @@ export default function App() {
                         >
                           <Sparkles className="mr-2 size-4" /> Load Demo Data
                         </Button>
-                        {/* === END DEMO ONLY === */}
-
                       </div>
                     )}
 
@@ -425,7 +415,6 @@ export default function App() {
                         <p className="font-medium text-slate-700">No agendas found.</p>
                         <p className="mt-1 text-sm">Please upload a sample agenda to begin your review.</p>
 
-                        {/* === TODO: DEMO ONLY - DELETE THIS BUTTON WHEN BACKEND IS CONNECTED === */}
                         <Button 
                           onClick={loadMockData} 
                           variant="outline" 
@@ -433,15 +422,13 @@ export default function App() {
                         >
                           <Sparkles className="mr-2 size-4 text-blue-600" /> Load Demo Data
                         </Button>
-                        {/* === END DEMO ONLY === */}
-
                       </div>
                     )}
 
                     {!isLoading && !error && filteredItems.map((item) => {
-                      const score = scoreFor(item)
-                      const priority = priorityFor(score)
                       const active = selected && item.id === selected.id
+                      const displayScore = item.score !== null ? `${item.score}/10` : "Not scored"
+                      
                       return (
                         <button
                           key={item.id}
@@ -454,7 +441,7 @@ export default function App() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-3">
                             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Item {item.number}</span>
-                            <Badge variant="outline" className={priorityStyle(priority)}>{priority} · {score}/10</Badge>
+                            <Badge variant="outline" className={priorityStyle(item.category)}>{item.category || "Uncategorized"} · {displayScore}</Badge>
                           </div>
                           <h3 className="text-[0.96rem] font-semibold leading-5 text-slate-900">{item.title}</h3>
                           <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
@@ -482,14 +469,14 @@ export default function App() {
                           <h2 className="max-w-3xl text-2xl font-semibold tracking-tight sm:text-[1.75rem]">{selected.title}</h2>
                           <p className="mt-2 text-sm text-slate-500">{selected.department}</p>
                         </div>
-                        <div className={`min-w-[170px] rounded-xl border px-4 py-3 ${priorityStyle(selectedPriority)}`}>
+                        <div className={`min-w-fit shrink-0 rounded-xl border px-4 py-3 ${priorityStyle(selected.category)}`}>
                           <div className="flex items-center justify-between gap-4">
                             <span className="text-xs font-semibold uppercase tracking-[0.12em]">Preparation priority</span>
                             <CircleGauge className="size-4" />
                           </div>
                           <div className="mt-1 flex items-end gap-2">
-                            <span className="text-2xl font-bold">{selectedPriority}</span>
-                            <span className="pb-0.5 text-sm font-semibold">{selectedScore}/10</span>
+                            <span className="text-2xl font-bold">{selected.category || "Uncategorized"}</span>
+                            <span className="pb-0.5 text-sm font-semibold">{selected.score !== null ? `${selected.score}/10` : "Not scored"}</span>
                           </div>
                         </div>
                       </div>
@@ -518,15 +505,20 @@ export default function App() {
                         </div>
 
                         <div className="grid gap-6 lg:grid-cols-2">
-                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.keyFacts} />
-                          <BriefingList title="Historical context" icon={BookOpen} items={selected.historicalContext} empty="No historical context has been attached." />
+                          {/* Map over the new object structure to extract the 'text' property */}
+                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.key_facts?.map((f: any) => f.text)} />
+                          
                           <EditableList
                             title="Likely questions"
                             icon={FileSearch}
-                            items={selected.likelyQuestions}
-                            onChange={(likelyQuestions) => updateSelected({ likelyQuestions })}
+                            items={selected.anticipated_questions?.map((q: any) => q.text)}
+                            onChange={(updatedTextArray) => {
+                              // Re-map back to the object structure expected by the backend
+                              const updatedQuestions = updatedTextArray.map((text) => ({ text, support_level: "Moderate", citations: [] }))
+                              updateSelected({ anticipated_questions: updatedQuestions })
+                            }}
                           />
-                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talkingPoints} />
+                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talking_points?.map((t: any) => t.text)} />
                         </div>
 
                         <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -534,7 +526,7 @@ export default function App() {
                             <AlertTriangle className="size-4" /> Verification needed
                           </div>
                           <ul className="space-y-1.5 text-sm leading-5 text-amber-900/80">
-                            {selected.missingInformation?.map((item) => <li key={item}>{item}</li>)}
+                            {selected.missingInformation?.map((item: string) => <li key={item}>{item}</li>)}
                           </ul>
                         </div>
 
@@ -590,31 +582,32 @@ export default function App() {
                           </div>
                           <div className="min-w-44">
                             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                              <span>{selectedPriority}</span><span>{selectedScore}/10</span>
+                              <span>{selected.category || "Uncategorized"}</span><span>{selected.score !== null ? `${selected.score}/10` : "Not scored"}</span>
                             </div>
-                            <Progress value={selectedScore * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
+                            {/* Render progress bar if score exists, otherwise zero */}
+                            <Progress value={(selected.score || 0) * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
                           </div>
                         </div>
 
                         <div className="space-y-4">
-                          {selected.factors.map((factor) => (
+                          {selected.priority?.factors?.map((factor: any) => (
                             <div key={factor.key} className="rounded-xl border border-slate-200 p-4">
                               <div className="mb-4 flex items-start justify-between gap-5">
                                 <div>
                                   <h4 className="font-semibold">{factor.label}</h4>
-                                  <p className="mt-1 text-sm leading-5 text-slate-500">{factor.description}</p>
+                                  <p className="mt-1 text-sm leading-5 text-slate-500">{factor.explanation}</p>
                                 </div>
-                                <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.score}</div>
+                                <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.points}</div>
                               </div>
                               <div className="grid grid-cols-[1fr_auto] items-center gap-4">
                                 <Slider
                                   min={0}
-                                  max={2}
-                                  step={1}
-                                  value={[factor.score]}
-                                  onValueChange={(value) => updateFactor(factor.key, value[0])}
+                                  max={2.5}
+                                  step={0.5}
+                                  value={[factor.points]}
+                                  disabled // Sliders disabled for now per discussion of backend scoring
                                   aria-label={`${factor.label} score`}
-                                  className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600"
+                                  className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 opacity-50"
                                 />
                                 <span className="text-xs text-slate-500">0 · 1 · 2</span>
                               </div>
@@ -677,6 +670,7 @@ export default function App() {
         </main>
       </div>
 
+      {/* Dialogs for Upload and Source additions remain exactly the same */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent>
           <DialogHeader>
