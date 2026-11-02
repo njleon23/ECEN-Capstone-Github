@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,12 +19,31 @@ app = FastAPI(
     version="0.1.0",
 )
 
+CORS_ORIGINS_ENV = "CORS_ORIGINS"
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+
+def get_cors_origins() -> list[str]:
+    configured_origins = os.getenv(CORS_ORIGINS_ENV)
+
+    if not configured_origins:
+        return DEFAULT_CORS_ORIGINS
+
+    return [
+        origin.strip().rstrip("/")
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
+
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
