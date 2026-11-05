@@ -22,6 +22,7 @@ The current integrated prototype includes:
 - Structured API error responses
 - Backend health-status reporting
 - An AI provider and data-model foundation
+- Retrieval over approved sources, a 0-to-10 preparation-priority score with a Low, Moderate, or High category, source-cited draft briefings, and source-grounded follow-up questions (`backend/app/analysis`)
 - Automated backend tests against PostgreSQL
 - Interactive FastAPI documentation
 
@@ -167,7 +168,17 @@ GET  /api/v1/agendas
 GET  /api/v1/agendas/{agenda_id}
 POST /api/v1/sources
 GET  /api/v1/sources
+PATCH /api/v1/sources/{source_id}/approval
+
+POST /api/v1/items/{item_id}/analyses
+POST /api/v1/agendas/{agenda_id}/analyses
+GET  /api/v1/agendas/{agenda_id}/priorities
+GET  /api/v1/jobs/{job_id}
+GET  /api/v1/items/{item_id}/briefing
+POST /api/v1/items/{item_id}/questions
 ```
+
+The analysis endpoints return the final `score` (0 to 10) and `category` (`Low`, `Moderate`, or `High`) for each item. The frontend should display them as given and not calculate its own thresholds. New sources start unapproved. A person approves a source with the approval endpoint, and only approved sources are used. Field names and example responses are in `docs/analysis-demos.md`.
 
 The agenda-upload endpoint accepts searchable PDF, TXT, and Markdown files up to 25 MB.
 
@@ -234,6 +245,8 @@ The current automated tests cover:
 - Source-type validation
 - Unsupported agenda-file rejection
 - AI provider and model-foundation behavior
+- Retrieval, priority scoring, briefing guardrails, follow-up questions, and the analysis pipeline
+- The analysis endpoints and how they follow the source approval flags
 
 ## Current Demonstration Workflow
 
@@ -257,10 +270,10 @@ The following capabilities are still under development:
 - Meetings are not yet separated in the frontend; items from all stored agendas are currently combined.
 - Source records are not yet persistently attached to individual agenda items.
 - Original supporting-source files are not yet preserved by the backend.
-- Passage-level retrieval and citation generation are not yet integrated into the current MVP.
-- The AI analysis foundation is not yet connected to a live REST analysis endpoint.
-- Source-grounded briefing generation is not yet implemented end-to-end in the integrated application.
-- The documented 0-to-10 preparation-priority score is not yet returned through the integrated backend API.
+- The frontend does not yet load live scores, briefings, or answers from the analysis endpoints. It no longer calculates its own score, and its demo data uses a placeholder schema.
+- Briefings come from a rule-based offline stand-in (not an AI) unless an `LLM_API_KEY` is set on the server. The live provider has not been tested against a real service.
+- Retrieval is keyword-based (BM25), so it can miss paraphrases. Analysis jobs and briefings are held in memory and are lost when the server restarts.
+- The score weights, thresholds, and word lists are proposals that the City has not validated. Analysis uses all approved sources, not only the ones attached to an item.
 - Review, approval, revision history, and feedback are not yet persisted.
 - Authentication and role-based authorization are not yet implemented.
 - The FastAPI backend and PostgreSQL database currently run in local development environments.
