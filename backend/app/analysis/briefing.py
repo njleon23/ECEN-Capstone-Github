@@ -261,7 +261,7 @@ def insufficient_briefing(item: AgendaItem, config: GenerationConfig,
         key_facts=[], concerns=[], anticipated_questions=[], talking_points=[],
         citations=[citations["item"]], model_id="none", prompt_version=config.prompt_version,
         configuration_version=priority.configuration_version if priority else "",
-        source_ids=[item.agenda_id], incomplete=True,
+        source_ids=[], incomplete=True,
         warnings=[("Procedural item: no preparation briefing or priority score is generated "
                    "for it." if procedural else
                    "Insufficient evidence: no approved source passages matched this item. "
@@ -308,5 +308,9 @@ def generate_briefing(item: AgendaItem, retrieved: Sequence[RetrievedPassage],
         talking_points=parts["talking_points"], citations=used_citations,
         model_id=response.model_id, prompt_version=config.prompt_version,
         configuration_version=priority.configuration_version if priority else "",
-        source_ids=sorted({c.source_id for c in used_citations}),
+        source_ids=sorted({
+            citation.source_id
+            for citation in used_citations
+            if citation.citation_id != "item"
+        }),
         incomplete=False, warnings=warnings)

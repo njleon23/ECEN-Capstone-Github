@@ -1,13 +1,8 @@
-"""AI and Analytics endpoints (ICD section 6.2, AI side).
+"""AI and Analytics HTTP endpoints.
 
-POST /api/v1/items/{item_id}/analyses      start retrieval, scoring, briefing for one item (202)
-POST /api/v1/agendas/{agenda_id}/analyses  start analysis for every item in an agenda (202)
-GET  /api/v1/agendas/{agenda_id}/priorities  latest priority (heat) for each item
-GET  /api/v1/jobs/{job_id}                 job state: queued | running | completed | degraded | failed
-GET  /api/v1/items/{item_id}/briefing      latest generated briefing (always a draft)
-POST /api/v1/items/{item_id}/questions     source-grounded follow-up question
-
-Approval of a briefing is a human action and is NOT done here. There is no login yet.
+Analysis and follow-up retrieval are restricted to sources explicitly attached
+to the selected agenda item. The retriever independently enforces source
+approval, so an attached but unapproved source is never used as evidence.
 """
 
 from __future__ import annotations
@@ -31,15 +26,28 @@ from app.services.analysis_repository import (
     get_latest_briefing,
     save_analysis_job,
 )
+from app.services.source_association_repository import (
+    SourceAssociationRepositoryError,
+    list_sources_for_item,
+)
+
 
 router = APIRouter(prefix="/api/v1", tags=["analysis"])
 
-_STATUS_FOR_CODE = {"RATE_LIMITED": 429, "PROVIDER_ERROR": 502, "DEPENDENCY_UNAVAILABLE": 503,
-                    "INSUFFICIENT_EVIDENCE": 422, "INVALID_REQUEST": 400}
+_STATUS_FOR_CODE = {
+    "RATE_LIMITED": 429,
+    "PROVIDER_ERROR": 502,
+    "DEPENDENCY_UNAVAILABLE": 503,
+    "INSUFFICIENT_EVIDENCE": 422,
+    "INVALID_REQUEST": 400,
+}
 
 
 class AnalysisRequest(BaseModel):
-    source_ids: Optional[List[str]] = Field(default=None, max_length=200)
+    source_ids: Optional[List[str]] = Field(
+        default=None,
+        max_length=200,
+    )
 
 
 class QuestionRequest(BaseModel):
@@ -47,13 +55,57 @@ class QuestionRequest(BaseModel):
 
 
 def _storage_error():
-    return error_response(503, "STORAGE_UNAVAILABLE", "The agenda could not be read.",
-                          "Try the request again after storage service is restored.")
+    return error_response(
+        503,
+        "STORAGE_UNAVAILABLE",
+        "Required backend data could not be read or written.",
+        "Try the request again after storage service is restored.",
+    )
 
 
 def _not_found(what: str):
-    return error_response(404, "NOT_FOUND", f"The requested {what} was not found.",
-                          f"Verify the {what} identifier and try again.")
+    return error_response(
+        404,
+        "NOT_FOUND",
+        f"The requested {what} was not found.",
+        f"Verify the {what} identifier and try again.",
+    )
+
+
+def _source_ids_for_item(
+    item_id: str,
+    requested_source_ids: Optional[List[str]] = None,
+) -> List[str]:
+    """Return the allowed source scope for one agenda item.
+
+    With no explicit request, every source attached to the item is allowed.
+    An explicit list may narrow that scope but may never add an unattached
+    source. An empty list remains empty and therefore retrieves no evidence.
+    """
+    attached_sources = list_sources_for_item(item_id)
+    attached_ids = {
+        source.source_id
+        for source in attached_sources
+    }
+
+    if requested_source_ids is None:
+        return sorted(attached_ids)
+
+    requested_ids = list(dict.fromkeys(requested_source_ids))
+    unattached_ids = [
+        source_id
+        for source_id in requested_ids
+        if source_id not in attached_ids
+    ]
+
+    if unattached_ids:
+        raise InvalidRequest(
+            "Every requested source must be attached "
+            "to the agenda item before analysis."
+        )
+
+    return requested_ids
+
 
 def _run_and_save_job(
     service: AnalysisService,
@@ -61,6 +113,7 @@ def _run_and_save_job(
 ) -> None:
     job = service.pipeline.run_job(job_id)
     save_analysis_job(job)
+
 
 @router.post("/items/{item_id}/analyses", status_code=202)
 def start_item_analysis(
@@ -97,9 +150,13 @@ def start_item_analysis(
             }
 
     try:
+        source_ids = _source_ids_for_item(
+            item_id,
+            body.source_ids if body else None,
+        )
         job = service.pipeline.submit(
             item,
-            source_ids=body.source_ids if body else None,
+            source_ids=source_ids,
             idempotency_key=idempotency_key,
         )
         save_analysis_job(job)
@@ -110,7 +167,10 @@ def start_item_analysis(
             error.message,
             "Correct the request and try again.",
         )
-    except AnalysisRepositoryError:
+    except (
+        AnalysisRepositoryError,
+        SourceAssociationRepositoryError,
+    ):
         return _storage_error()
 
     if job.state == "queued":
@@ -179,14 +239,19 @@ def start_agenda_analysis(
                 continue
 
         try:
+            source_ids = _source_ids_for_item(item.item_id)
             job = service.pipeline.submit(
                 item,
+                source_ids=source_ids,
                 idempotency_key=item_idempotency_key,
             )
             save_analysis_job(job)
         except InvalidRequest:
             continue
-        except AnalysisRepositoryError:
+        except (
+            AnalysisRepositoryError,
+            SourceAssociationRepositoryError,
+        ):
             return _storage_error()
 
         if job.state == "queued":
@@ -198,9 +263,7 @@ def start_agenda_analysis(
                 "item_number": item.item_number,
                 "job_id": job.job_id,
                 "state": job.state,
-                "status_url": (
-                    f"/api/v1/jobs/{job.job_id}"
-                ),
+                "status_url": f"/api/v1/jobs/{job.job_id}",
             }
         )
 
@@ -215,6 +278,7 @@ def start_agenda_analysis(
         "agenda_id": agenda_id,
         "jobs": jobs,
     }
+
 
 @router.get("/agendas/{agenda_id}/priorities")
 def agenda_priorities(
@@ -322,26 +386,62 @@ def get_briefing(
 
     return briefing.to_dict()
 
+
 @router.post("/items/{item_id}/questions")
-def ask_question(item_id: str, body: QuestionRequest,
-                 service: AnalysisService = Depends(get_synced_service)):
+def ask_question(
+    item_id: str,
+    body: QuestionRequest,
+    service: AnalysisService = Depends(get_synced_service),
+):
     try:
         item = item_store.get_item(item_id)
     except AgendaRepositoryError:
         return _storage_error()
+
     if item is None:
         return _not_found("agenda item")
+
     try:
-        result = service.pipeline.ask(body.question, item)
-    except InvalidRequest as e:
-        return error_response(400, e.code, e.message, "Correct the question and try again.")
-    except AnalyticsError as e:                       # defensive; the pipeline maps these
-        return error_response(e.http_status, e.code, e.message, "Try again later.")
+        source_ids = _source_ids_for_item(item_id)
+        result = service.pipeline.ask(
+            body.question,
+            item,
+            source_ids=source_ids,
+        )
+    except InvalidRequest as error:
+        return error_response(
+            400,
+            error.code,
+            error.message,
+            "Correct the question and try again.",
+        )
+    except SourceAssociationRepositoryError:
+        return _storage_error()
+    except AnalyticsError as error:
+        return error_response(
+            error.http_status,
+            error.code,
+            error.message,
+            "Try again later.",
+        )
+
     if result.status == "insufficient_evidence":
-        return error_response(422, "INSUFFICIENT_EVIDENCE", result.message,
-                              "Add an approved source that covers the question.")
+        return error_response(
+            422,
+            "INSUFFICIENT_EVIDENCE",
+            result.message,
+            "Attach and approve a source that covers the question.",
+        )
+
     if result.status == "failed":
-        return error_response(_STATUS_FOR_CODE.get(result.error_code or "", 500),
-                              result.error_code or "INTERNAL_ERROR", result.message,
-                              "Try again later.")
-    return result.to_dict()                           # answered or refused
+        return error_response(
+            _STATUS_FOR_CODE.get(
+                result.error_code or "",
+                500,
+            ),
+            result.error_code or "INTERNAL_ERROR",
+            result.message,
+            "Try again later.",
+        )
+
+    return result.to_dict()

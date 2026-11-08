@@ -1,8 +1,8 @@
-"""Helpers and the ``api`` fixture shared by the AI and Analytics API tests.
+"""Helpers and the ``api`` fixture shared by analysis API tests.
 
-This is not a conftest.py on purpose: the backend's own ``tests/conftest.py`` prepares the
-dedicated PostgreSQL test database, and these tests reuse that setup. Test files import what
-they need, for example ``from api_helpers import api, add_demo_sources``.
+Successful-analysis helpers explicitly attach the sources they create to the
+agenda item. This mirrors the production source-association boundary instead
+of relying on the old global-source behavior.
 """
 
 from pathlib import Path
@@ -15,24 +15,38 @@ from app.analysis.demo_sources import demo_sources
 from app.analysis.llm_client import OfflineExtractiveProvider
 from app.analysis.service import AnalysisService, set_service
 from app.database import SessionLocal
-from app.db_models import (AgendaItemRecord, AgendaItemSourceRecord, AgendaRecord,
-                           SourceRecord)
+from app.db_models import (
+    AgendaItemRecord,
+    AgendaItemSourceRecord,
+    AgendaRecord,
+    SourceRecord,
+)
 from app.main import app
 
-SAMPLE_AGENDA = (Path(__file__).resolve().parents[2] / "council-brief" / "examples"
-                 / "Sample_City_Council_Agenda_2026-10-08.txt")
+
+SAMPLE_AGENDA = (
+    Path(__file__).resolve().parents[2]
+    / "council-brief"
+    / "examples"
+    / "Sample_City_Council_Agenda_2026-10-08.txt"
+)
 
 
 def _clear_tables():
-    """Empty the test database so each test sees only the rows it creates."""
-    with SessionLocal.begin() as db:
-        for table in (AgendaItemSourceRecord, SourceRecord, AgendaItemRecord, AgendaRecord):
-            db.execute(delete(table))
+    """Empty the test database so each test sees only its own rows."""
+    with SessionLocal.begin() as database:
+        for table in (
+            AgendaItemSourceRecord,
+            SourceRecord,
+            AgendaItemRecord,
+            AgendaRecord,
+        ):
+            database.execute(delete(table))
 
 
 @pytest.fixture()
 def api(monkeypatch):
-    """A TestClient on the test database, with empty tables and a fresh analysis service."""
+    """TestClient using the isolated PostgreSQL test database."""
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     _clear_tables()
     set_service(AnalysisService(OfflineExtractiveProvider()))
@@ -42,40 +56,108 @@ def api(monkeypatch):
 
 
 def upload_agenda(client):
-    with SAMPLE_AGENDA.open("rb") as f:
-        r = client.post("/api/v1/agendas", files={"file": (SAMPLE_AGENDA.name, f, "text/plain")},
-                        data={"meeting_title": "Regular Meeting", "meeting_date": "2026-10-08"})
-    assert r.status_code == 201
-    return r.json()
+    with SAMPLE_AGENDA.open("rb") as agenda_file:
+        response = client.post(
+            "/api/v1/agendas",
+            files={
+                "file": (
+                    SAMPLE_AGENDA.name,
+                    agenda_file,
+                    "text/plain",
+                )
+            },
+            data={
+                "meeting_title": "Regular Meeting",
+                "meeting_date": "2026-10-08",
+            },
+        )
+
+    assert response.status_code == 201
+    return response.json()
 
 
 def item_id(agenda, number):
-    return next(i["item_id"] for i in agenda["items"] if i["item_number"] == number)
+    return next(
+        item["item_id"]
+        for item in agenda["items"]
+        if item["item_number"] == number
+    )
 
 
 def set_approval(client, source_id, approved):
-    r = client.patch(f"/api/v1/sources/{source_id}/approval", json={"approved": approved})
-    assert r.status_code == 200
-    return r.json()
+    response = client.patch(
+        f"/api/v1/sources/{source_id}/approval",
+        json={"approved": approved},
+    )
+
+    assert response.status_code == 200
+    return response.json()
 
 
 def add_demo_sources(client, approve=True):
-    """Add the fictional sources through the backend's own endpoint, then approve them."""
+    """Add fictional sources and optionally approve their approved fixtures."""
     ids = {}
-    for s in demo_sources():
-        r = client.post("/api/v1/sources", json={
-            "title": s.title, "source_type": s.source_type, "text": s.text,
-            "source_date": s.source_date})
-        assert r.status_code == 201
-        assert r.json()["approved"] is False              # always starts unapproved
-        ids[s.source_id] = r.json()["source_id"]
-        if approve and s.approved:
-            set_approval(client, ids[s.source_id], True)
+
+    for source in demo_sources():
+        response = client.post(
+            "/api/v1/sources",
+            json={
+                "title": source.title,
+                "source_type": source.source_type,
+                "text": source.text,
+                "source_date": source.source_date,
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["approved"] is False
+
+        ids[source.source_id] = response.json()["source_id"]
+
+        if approve and source.approved:
+            set_approval(
+                client,
+                ids[source.source_id],
+                True,
+            )
+
     return ids
 
 
-def run_analysis(client, iid, **headers):
-    r = client.post(f"/api/v1/items/{iid}/analyses", headers=headers)
-    assert r.status_code == 202
-    # TestClient runs background tasks before returning, so the job is finished.
-    return client.get(r.json()["status_url"]).json()
+def attach_sources_to_item(client, agenda_item_id, source_ids):
+    """Attach the given sources, accepting already-existing associations."""
+    for source_id in dict.fromkeys(source_ids):
+        response = client.post(
+            f"/api/v1/agenda-items/{agenda_item_id}"
+            f"/sources/{source_id}"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["item_id"] == agenda_item_id
+        assert response.json()["source_id"] == source_id
+
+
+def attach_all_sources_to_item(client, agenda_item_id):
+    response = client.get("/api/v1/sources")
+    assert response.status_code == 200
+
+    attach_sources_to_item(
+        client,
+        agenda_item_id,
+        [source["source_id"] for source in response.json()],
+    )
+
+
+def run_analysis(client, agenda_item_id, **headers):
+    """Attach current test sources, run analysis, and return its final job."""
+    attach_all_sources_to_item(client, agenda_item_id)
+
+    response = client.post(
+        f"/api/v1/items/{agenda_item_id}/analyses",
+        headers=headers,
+    )
+
+    assert response.status_code == 202
+
+    # TestClient completes FastAPI background tasks before returning.
+    return client.get(response.json()["status_url"]).json()

@@ -94,7 +94,11 @@ class AnalysisPipeline:
                               state="queued", progress_message="Queued",
                               idempotency_key=idempotency_key)
             self._jobs[job.job_id] = job
-            self._job_sources[job.job_id] = list(source_ids) if source_ids else None
+            self._job_sources[job.job_id] = (
+                list(source_ids)
+                if source_ids is not None
+                else None
+            )
             self._job_items[job.job_id] = item
             self._latest_job[item.item_id] = job.job_id
             if idempotency_key:
@@ -204,7 +208,7 @@ class AnalysisPipeline:
 
     # -- follow-up questions --------------------------------------------------
 
-    def ask(self, question: str, item: AgendaItem) -> AnswerResult:
+    def ask(self, question: str, item: AgendaItem, source_ids: Optional[List[str]] = None) -> AnswerResult:
         usage: List[Dict[str, Any]] = []
         responses: List[ProviderResponse] = []
 
@@ -216,6 +220,7 @@ class AnalysisPipeline:
         try:
             result = answer_question(
                 question, item, self.retriever, self.provider,
+                source_ids=source_ids,
                 score_config=self.score_config, gen_config=self.gen_config,
                 sleep=self.sleep, on_response=on_response)
         except InvalidRequest:
@@ -233,7 +238,11 @@ class AnalysisPipeline:
     def fingerprint_for(self, item: AgendaItem, source_ids: Optional[List[str]] = None) -> str:
         """Hash of every input that affects the analysis. If a stored job's
         fingerprint differs from this value, mark its briefing stale (FSR REV-004)."""
-        wanted = set(source_ids) if source_ids else None
+        wanted = (
+            set(source_ids)
+            if source_ids is not None
+            else None
+        )
         sources = [(s.source_id, hashlib.sha256(s.text.encode()).hexdigest()[:16], s.approved)
                    for s in self.retriever.sources()
                    if wanted is None or s.source_id in wanted]

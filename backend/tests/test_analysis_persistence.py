@@ -3,6 +3,7 @@ from api_helpers import (
     api,  # noqa: F401
     item_id,
     upload_agenda,
+    attach_all_sources_to_item,
 )
 
 from app.analysis.errors import DependencyUnavailable
@@ -21,6 +22,10 @@ def submit_analysis(
     agenda_item_id: str,
     idempotency_key: str,
 ) -> str:
+    attach_all_sources_to_item(
+    client,
+    agenda_item_id,
+)
     response = client.post(
         f"/api/v1/items/{agenda_item_id}/analyses",
         headers={
