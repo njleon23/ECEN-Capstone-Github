@@ -118,12 +118,6 @@ export interface AnalysisFields {
   modelId?: string
 }
 
-export interface ProviderStatus {
-  mode: "live" | "offline"
-  model_id: string
-  is_ai_model: boolean
-}
-
 export interface FollowUpResult {
   status: "answered" | "refused" | "insufficient_evidence" | "error"
   text: string
@@ -196,7 +190,7 @@ export function withAnalysisDefaults<T extends object>(item: T): T & AnalysisFie
     concerns: [],
     anticipated_questions: [],
     talking_points: [],
-    missingInformation: ["The analysis has not been run yet. Choose Run analysis."],
+    missingInformation: ["The analysis has not been run yet. Choose Analyze this item."],
     ...item,
   } as T & AnalysisFields
 }
@@ -267,7 +261,8 @@ export function jobToFields(job: ApiJob): AnalysisFields {
 
 // ---- calls -----------------------------------------------------------------------------------
 
-async function waitForJob(jobId: string, tries = 100, delayMs = 300): Promise<ApiJob> {
+// Polls every 0.5 s for up to 2 minutes, which leaves room for a live model.
+async function waitForJob(jobId: string, tries = 240, delayMs = 500): Promise<ApiJob> {
   for (let attempt = 0; attempt < tries; attempt++) {
     const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`)
     if (!response.ok) throw new Error(await errorMessage(response, "The analysis job could not be read."))
@@ -293,26 +288,12 @@ async function analyzeOne(itemId: string): Promise<AnalysisFields> {
   }
 }
 
-/** Runs the analysis for each item (a few at a time). One item failing never stops the others. */
-export async function runAnalysis(items: Array<{ id: string }>, batchSize = 5): Promise<Record<string, AnalysisFields>> {
-  const results: Record<string, AnalysisFields> = {}
-  for (let start = 0; start < items.length; start += batchSize) {
-    const batch = items.slice(start, start + batchSize)
-    const done = await Promise.all(batch.map((item) => analyzeOne(item.id)))
-    batch.forEach((item, index) => { results[item.id] = done[index] })
-  }
-  return results
-}
-
-/** What writes the briefings: a live model or the rule-based stand-in. Null if unreachable. */
-export async function fetchProviderStatus(): Promise<ProviderStatus | null> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/analysis/provider`)
-    return response.ok ? ((await response.json()) as ProviderStatus) : null
-  } catch {
-    return null
-  }
-}
+/**
+ * Analyzes one agenda item: one request to start the job, then polling until it finishes.
+ * Failures come back as a result with analysisState "failed" and a message, not as an exception.
+ * A whole-agenda option can be added later; it should keep the agenda id so other agendas are not analyzed.
+ */
+export const analyzeItem = analyzeOne
 
 /** Short label for a briefing's writer, for the draft heading. */
 export function writerLabel(modelId?: string): string {

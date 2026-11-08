@@ -49,7 +49,7 @@ import { Toaster } from "@/components/ui/sonner"
 // Import our FastAPI backend service layer instead of static mock data
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
-import { categoryLabel, fetchProviderStatus, ProviderStatus, runAnalysis, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
+import { analyzeItem, categoryLabel, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
 
 type View = "meeting" | "sources" | "evaluation"
@@ -112,7 +112,6 @@ export default function App() {
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const [provider, setProvider] = useState<ProviderStatus | null>(null)
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
@@ -206,19 +205,16 @@ export default function App() {
     )
   }
 
-  useEffect(() => {
-    fetchProviderStatus().then(setProvider)
-  }, [analyzing])
-
-  const runAnalysisForAll = async () => {
-    if (items.length === 0 || analyzing) return
+  // Analyzes only the item that is open. Each click sends one request to the analysis API.
+  const runAnalysisForSelected = async () => {
+    if (!selected || analyzing) return
+    const itemId = selected.id
     setAnalyzing(true)
     try {
-      const results = await runAnalysis(items)
-      setItems((current) => current.map((item) => (results[item.id] ? { ...item, ...results[item.id] } : item)))
-      const failed = Object.values(results).filter((r) => r.analysisState === "failed").length
-      if (failed > 0) toast.error(`${failed} item(s) could not be analyzed. See Verification needed on each item.`)
-      else toast.success("Analysis complete. Review each draft before use.")
+      const result = await analyzeItem(itemId)
+      setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...result } : item)))
+      if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
+      else toast.success("Analysis complete. Review the draft before use.")
     } finally {
       setAnalyzing(false)
     }
@@ -381,13 +377,8 @@ export default function App() {
               <Button variant="outline" onClick={() => setSourceOpen(true)} className="hidden sm:inline-flex">
                 <Plus /> Add source
               </Button>
-              {provider && (
-                <Badge variant="outline" className={provider.is_ai_model ? "hidden border-emerald-200 bg-emerald-50 text-emerald-700 md:inline-flex" : "hidden border-amber-200 bg-amber-50 text-amber-700 md:inline-flex"}>
-                  {provider.is_ai_model ? `AI model: ${provider.model_id}` : "Stand-in writer (no AI model)"}
-                </Badge>
-              )}
-              <Button variant="outline" onClick={runAnalysisForAll} disabled={analyzing || items.length === 0}>
-                {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />} {analyzing ? "Analyzing…" : "Run analysis"}
+              <Button variant="outline" onClick={runAnalysisForSelected} disabled={analyzing || !selected}>
+                {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />} {analyzing ? "Analyzing…" : "Analyze this item"}
               </Button>
               <Button onClick={() => setUploadOpen(true)} className="bg-blue-600 hover:bg-blue-700">
                 <Upload /> <span className="hidden sm:inline">Upload agenda</span><span className="sm:hidden">Upload</span>
