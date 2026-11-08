@@ -155,16 +155,16 @@ export default function App() {
       
       // UPDATED SCHEMA FROM QUAN: Objects with text, support_level, and citations
       key_facts: [
-        { text: "Project cost: $1.2M", support_level: "High", citations: [] },
-        { text: "Traffic impact expected on HWY 6", support_level: "High", citations: [] }
+        { text: "Project cost: $1.2M", support_level: "High", citations: ["Open Budget FY26, pg. 42"] },
+        { text: "Traffic impact expected on HWY 6", support_level: "High", citations: ["TxDOT Traffic Management Plan"] }
       ],
       anticipated_questions: [
         { text: "Why was this vendor selected?", support_level: "Moderate", citations: [] },
         { text: "How long will lane closures last?", support_level: "Moderate", citations: [] }
       ],
       talking_points: [
-        { text: "The project was competitively bid.", support_level: "High", citations: [] },
-        { text: "Funds are allocated in the FY26 budget.", support_level: "High", citations: [] }
+        { text: "The project was competitively bid.", support_level: "High", citations: ["Approved Vendor Contract #892-B"] },
+        { text: "Funds are allocated in the FY26 budget.", support_level: "High", citations: ["Open Budget FY26"] }
       ],
       missingInformation: ["Exact timeline for lane closures"],
       
@@ -505,8 +505,8 @@ export default function App() {
                         </div>
 
                         <div className="grid gap-6 lg:grid-cols-2">
-                          {/* Map over the new object structure to extract the 'text' property */}
-                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.key_facts?.map((f: any) => f.text)} />
+                          {/* UPDATED: Pass the full objects instead of mapped strings to allow BriefingList to render badges */}
+                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.key_facts} />
                           
                           <EditableList
                             title="Likely questions"
@@ -518,7 +518,7 @@ export default function App() {
                               updateSelected({ anticipated_questions: updatedQuestions })
                             }}
                           />
-                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talking_points?.map((t: any) => t.text)} />
+                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talking_points} />
                         </div>
 
                         <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -729,13 +729,62 @@ export default function App() {
   )
 }
 
-function BriefingList({ title, icon: Icon, items, empty = "No information available." }: { title: string; icon: React.ComponentType<{ className?: string }>; items: string[]; empty?: string }) {
+// UPDATED: BriefingList now accepts `any[]` instead of strictly `string[]` so it can parse your full AI objects
+function BriefingList({ title, icon: Icon, items, empty = "No information available." }: { title: string; icon: React.ComponentType<{ className?: string }>; items: any[]; empty?: string }) {
   return (
     <div>
       <h3 className="mb-3 flex items-center gap-2 font-semibold"><Icon className="size-4 text-blue-600" /> {title}</h3>
       {items && items.length > 0 ? (
-        <ul className="space-y-2.5 text-sm leading-6 text-slate-700">
-          {items.map((item) => <li key={item} className="flex gap-2"><span className="mt-2 size-1.5 shrink-0 rounded-full bg-blue-500" /> <span>{item}</span></li>)}
+        <ul className="space-y-4 text-sm leading-6 text-slate-700">
+          {items.map((item, idx) => {
+            // Check if the item is just a string (fallback) or the full object
+            const text = typeof item === 'string' ? item : item.text;
+            const supportLevel = typeof item === 'string' ? null : item.support_level;
+            const citations = typeof item === 'string' ? null : item.citations;
+            
+            return (
+              <li key={idx} className="flex flex-col gap-1">
+                <div className="flex items-start gap-2">
+                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-blue-500" /> 
+                  <div className="flex flex-wrap items-center">
+                    <span className="mr-2">{text}</span>
+                    
+                    {/* 1. AI Confidence Badge (Colors match your existing UI palette!) */}
+                    {supportLevel && (
+                      <span className={`mr-2 mt-0.5 inline-flex items-center rounded-md px-2 py-0.5 text-[0.65rem] font-medium ring-1 ring-inset ${
+                        supportLevel.toLowerCase() === 'high' ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 
+                        supportLevel.toLowerCase() === 'moderate' ? 'bg-amber-50 text-amber-800 ring-amber-600/20' : 
+                        'bg-slate-50 text-slate-600 ring-slate-500/10'
+                      }`}>
+                        {supportLevel} Support
+                      </span>
+                    )}
+
+                    {/* 2. Citation Count Badge */}
+                    {citations && citations.length > 0 && (
+                      <span className="mt-0.5 inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[0.65rem] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                        {citations.length} Source{citations.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Government Source Dropdown */}
+                {citations && citations.length > 0 && (
+                  <ul className="ml-5 mt-1 space-y-1 border-l-2 border-slate-200 pl-3">
+                    {citations.map((cite: string, i: number) => (
+                      <li key={i} className="text-xs text-slate-500 font-mono flex items-center">
+                        <svg className="w-3 h-3 mr-1.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                        Ref: {cite}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
         </ul>
       ) : <EmptySection>{empty}</EmptySection>}
     </div>
