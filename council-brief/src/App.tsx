@@ -49,6 +49,8 @@ import { Toaster } from "@/components/ui/sonner"
 // Import our FastAPI backend service layer instead of static mock data
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
+import { categoryLabel, fetchProviderStatus, ProviderStatus, runAnalysis, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
+import { FollowUpBox } from "./FollowUpBox"
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -109,6 +111,8 @@ export default function App() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [provider, setProvider] = useState<ProviderStatus | null>(null)
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
@@ -121,7 +125,7 @@ export default function App() {
       try {
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
-          setItems(agendaData)
+          setItems(agendaData.map(withAnalysisDefaults))
           setSelectedId(agendaData[0].id)
         }
         if (sourceData) {
@@ -202,6 +206,35 @@ export default function App() {
     )
   }
 
+  useEffect(() => {
+    fetchProviderStatus().then(setProvider)
+  }, [analyzing])
+
+  const runAnalysisForAll = async () => {
+    if (items.length === 0 || analyzing) return
+    setAnalyzing(true)
+    try {
+      const results = await runAnalysis(items)
+      setItems((current) => current.map((item) => (results[item.id] ? { ...item, ...results[item.id] } : item)))
+      const failed = Object.values(results).filter((r) => r.analysisState === "failed").length
+      if (failed > 0) toast.error(`${failed} item(s) could not be analyzed. See Verification needed on each item.`)
+      else toast.success("Analysis complete. Review each draft before use.")
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  const toggleApproval = async (source: SourceRecord) => {
+    const next = !source.approved
+    try {
+      await setSourceApproval(source.id, next)
+      setSources((current) => current.map((s) => (s.id === source.id ? { ...s, approved: next } : s)))
+      toast.success(next ? "Source approved. Run the analysis again to use it." : "Source approval withdrawn.")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The approval could not be saved.")
+    }
+  }
+
   const processAgenda = async () => {
     if (!agendaFile) {
       toast.error("Choose an agenda PDF or text file first.")
@@ -211,7 +244,7 @@ export default function App() {
     try {
       await uploadAgendaPdf(agendaFile)
       const updatedAgendas = await fetchAgendas()
-      setItems(updatedAgendas)
+      setItems(updatedAgendas.map(withAnalysisDefaults))
       if (updatedAgendas.length > 0) {
         setSelectedId(updatedAgendas[0].id)
       }
@@ -348,6 +381,14 @@ export default function App() {
               <Button variant="outline" onClick={() => setSourceOpen(true)} className="hidden sm:inline-flex">
                 <Plus /> Add source
               </Button>
+              {provider && (
+                <Badge variant="outline" className={provider.is_ai_model ? "hidden border-emerald-200 bg-emerald-50 text-emerald-700 md:inline-flex" : "hidden border-amber-200 bg-amber-50 text-amber-700 md:inline-flex"}>
+                  {provider.is_ai_model ? `AI model: ${provider.model_id}` : "Stand-in writer (no AI model)"}
+                </Badge>
+              )}
+              <Button variant="outline" onClick={runAnalysisForAll} disabled={analyzing || items.length === 0}>
+                {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />} {analyzing ? "Analyzing…" : "Run analysis"}
+              </Button>
               <Button onClick={() => setUploadOpen(true)} className="bg-blue-600 hover:bg-blue-700">
                 <Upload /> <span className="hidden sm:inline">Upload agenda</span><span className="sm:hidden">Upload</span>
               </Button>
@@ -427,7 +468,7 @@ export default function App() {
 
                     {!isLoading && !error && filteredItems.map((item) => {
                       const active = selected && item.id === selected.id
-                      const displayScore = item.score !== null ? `${item.score}/10` : "Not scored"
+                      const displayScore = scoreLabel(item)
                       
                       return (
                         <button
@@ -441,7 +482,7 @@ export default function App() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-3">
                             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Item {item.number}</span>
-                            <Badge variant="outline" className={priorityStyle(item.category)}>{item.category || "Uncategorized"} · {displayScore}</Badge>
+                            <Badge variant="outline" className={priorityStyle(item.category)}>{categoryLabel(item)} · {displayScore}</Badge>
                           </div>
                           <h3 className="text-[0.96rem] font-semibold leading-5 text-slate-900">{item.title}</h3>
                           <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500">
@@ -475,8 +516,8 @@ export default function App() {
                             <CircleGauge className="size-4" />
                           </div>
                           <div className="mt-1 flex items-end gap-2">
-                            <span className="text-2xl font-bold">{selected.category || "Uncategorized"}</span>
-                            <span className="pb-0.5 text-sm font-semibold">{selected.score !== null ? `${selected.score}/10` : "Not scored"}</span>
+                            <span className="text-2xl font-bold">{categoryLabel(selected)}</span>
+                            <span className="pb-0.5 text-sm font-semibold">{scoreLabel(selected)}</span>
                           </div>
                         </div>
                       </div>
@@ -494,7 +535,7 @@ export default function App() {
                       <TabsContent value="briefing" className="p-5 sm:p-6">
                         <div className="mb-6 rounded-xl border-l-4 border-blue-600 bg-blue-50/70 p-4">
                           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-900">
-                            <Sparkles className="size-4" /> Source-grounded draft (FastAPI AI)
+                            <Sparkles className="size-4" /> {writerLabel(selected.modelId)}
                           </div>
                           <Textarea
                             value={selected.summary}
@@ -529,6 +570,8 @@ export default function App() {
                             {selected.missingInformation?.map((item: string) => <li key={item}>{item}</li>)}
                           </ul>
                         </div>
+
+                        {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} /></div>}
 
                         <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 print:hidden">
                           <h3 className="mb-4 text-sm font-semibold text-slate-900">Staff Review & Sign-off</h3>
@@ -582,7 +625,7 @@ export default function App() {
                           </div>
                           <div className="min-w-44">
                             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
-                              <span>{selected.category || "Uncategorized"}</span><span>{selected.score !== null ? `${selected.score}/10` : "Not scored"}</span>
+                              <span>{categoryLabel(selected)}</span><span>{scoreLabel(selected)}</span>
                             </div>
                             {/* Render progress bar if score exists, otherwise zero */}
                             <Progress value={(selected.score || 0) * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
@@ -602,14 +645,14 @@ export default function App() {
                               <div className="grid grid-cols-[1fr_auto] items-center gap-4">
                                 <Slider
                                   min={0}
-                                  max={2.5}
+                                  max={factor.maxPoints ?? 2.5}
                                   step={0.5}
                                   value={[factor.points]}
                                   disabled // Sliders disabled for now per discussion of backend scoring
                                   aria-label={`${factor.label} score`}
                                   className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 opacity-50"
                                 />
-                                <span className="text-xs text-slate-500">0 · 1 · 2</span>
+                                <span className="text-xs text-slate-500">of {factor.maxPoints ?? 2.5} max</span>
                               </div>
                             </div>
                           ))}
@@ -626,7 +669,7 @@ export default function App() {
                         </div>
                         {selectedSources.length > 0 ? (
                           <div className="space-y-3">
-                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} />)}
+                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} onToggleApproval={toggleApproval} />)}
                           </div>
                         ) : (
                           <EmptySection>No supporting sources attached yet.</EmptySection>
@@ -654,7 +697,7 @@ export default function App() {
                 <Button onClick={() => setSourceOpen(true)} className="bg-blue-600 hover:bg-blue-700"><Plus /> Add source</Button>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                {sources.map((source) => <SourceCard key={source.id} source={source} expanded />)}
+                {sources.map((source) => <SourceCard key={source.id} source={source} expanded onToggleApproval={toggleApproval} />)}
               </div>
             </section>
           )}
@@ -804,7 +847,7 @@ function EditableList({ title, icon: Icon, items, onChange }: { title: string; i
   )
 }
 
-function SourceCard({ source, expanded = false }: { source: SourceRecord; expanded?: boolean }) {
+function SourceCard({ source, expanded = false, onToggleApproval }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-4">
@@ -812,6 +855,11 @@ function SourceCard({ source, expanded = false }: { source: SourceRecord; expand
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">{source.type}</Badge>
             <span className="text-xs text-slate-400">{source.date}</span>
+            {typeof source.approved === "boolean" && (
+              <Badge variant="outline" className={source.approved ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                {source.approved ? "Approved" : "Not approved"}
+              </Badge>
+            )}
           </div>
           <h4 className="font-semibold leading-5">{source.title}</h4>
         </div>
@@ -822,6 +870,11 @@ function SourceCard({ source, expanded = false }: { source: SourceRecord; expand
         )}
       </div>
       <p className={`mt-3 text-sm leading-6 text-slate-600 ${expanded ? "" : "line-clamp-3"}`}>{source.excerpt}</p>
+      {onToggleApproval && typeof source.approved === "boolean" && (
+        <Button size="sm" variant="outline" className="mt-3" onClick={() => onToggleApproval(source)}>
+          {source.approved ? "Withdraw approval" : "Approve source"}
+        </Button>
+      )}
       {source.fileName && <p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><FileText className="size-3.5" /> {source.fileName}</p>}
     </div>
   )

@@ -1,4 +1,4 @@
-const API_BASE_URL =
+export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ??
   "http://localhost:8000/api/v1"
 
@@ -34,6 +34,7 @@ export interface SourceRecord {
   url: string
   excerpt: string
   fileName?: string
+  approved?: boolean
 }
 
 interface BackendAgendaItem {
@@ -147,6 +148,7 @@ function mapSource(source: BackendSourceResponse): SourceRecord {
     url: source.source_url ?? "",
     excerpt: source.text || "No text excerpt was supplied.",
     fileName: source.file_name ?? undefined,
+    approved: source.approved,
   }
 }
 
