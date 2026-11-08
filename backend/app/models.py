@@ -77,6 +77,37 @@ class SourceDetachmentResponse(BaseModel):
     removed: bool
 
 
+class BriefingReviewUpdate(BaseModel):
+    status: Literal[
+        "draft",
+        "in_review",
+        "approved",
+        "rejected",
+    ]
+    reviewer: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    comments: str = Field(
+        default="",
+        max_length=5000,
+    )
+
+
+class BriefingReviewResponse(BaseModel):
+    review_id: str
+    briefing_id: str
+    status: Literal[
+        "draft",
+        "in_review",
+        "approved",
+        "rejected",
+    ]
+    reviewer: str
+    comments: str
+    reviewed_at: datetime
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str

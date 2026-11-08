@@ -234,8 +234,8 @@ def agenda_priorities(
     try:
         for item in items:
             job = (
-                service.pipeline.latest_job(item.item_id)
-                or get_latest_analysis_job(item.item_id)
+                get_latest_analysis_job(item.item_id)
+                or service.pipeline.latest_job(item.item_id)
             )
             priority = job.priority if job else None
 
@@ -287,8 +287,8 @@ def get_job(
 ):
     try:
         job = (
-            service.pipeline.get_job(job_id)
-            or get_analysis_job(job_id)
+            get_analysis_job(job_id)
+            or service.pipeline.get_job(job_id)
         )
     except AnalysisRepositoryError:
         return _storage_error()
@@ -306,8 +306,8 @@ def get_briefing(
 ):
     try:
         briefing = (
-            service.pipeline.latest_briefing(item_id)
-            or get_latest_briefing(item_id)
+            get_latest_briefing(item_id)
+            or service.pipeline.latest_briefing(item_id)
         )
     except AnalysisRepositoryError:
         return _storage_error()

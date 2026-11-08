@@ -331,3 +331,43 @@ class AnalysisJobRecord(Base):
         ForeignKey("briefings.briefing_id", ondelete="SET NULL"),
         nullable=True,
     )
+
+class BriefingReviewRecord(Base):
+    __tablename__ = "briefing_reviews"
+    __table_args__ = (
+        Index(
+            "idx_briefing_reviews_briefing_reviewed_at",
+            "briefing_id",
+            "reviewed_at",
+        ),
+    )
+
+    review_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    briefing_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "briefings.briefing_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    reviewer: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    comments: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+    )
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
