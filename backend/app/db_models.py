@@ -6,14 +6,17 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
     JSON,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
+
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -162,4 +165,169 @@ class AgendaItemSourceRecord(Base):
     )
     source: Mapped[SourceRecord] = relationship(
         back_populates="agenda_item_links",
+    )
+
+
+class BriefingRecord(Base):
+    __tablename__ = "briefings"
+    __table_args__ = (
+        UniqueConstraint(
+            "item_id",
+            "revision",
+            name="uq_briefings_item_revision",
+        ),
+        Index(
+            "idx_briefings_item_generated_at",
+            "item_id",
+            "generated_at",
+        ),
+    )
+
+    briefing_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    item_id: Mapped[str] = mapped_column(
+        ForeignKey("agenda_items.item_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    summary: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    key_facts: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    concerns: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    anticipated_questions: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    talking_points: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    citations: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    source_ids: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    warnings: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    model_id: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+    )
+    prompt_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+    )
+    configuration_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+    )
+    incomplete: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+
+class AnalysisJobRecord(Base):
+    __tablename__ = "analysis_jobs"
+    __table_args__ = (
+        Index(
+            "idx_analysis_jobs_item_created_at",
+            "item_id",
+            "created_at",
+        ),
+    )
+
+    job_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    item_id: Mapped[str] = mapped_column(
+        ForeignKey("agenda_items.item_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    progress_message: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+    )
+    score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    category: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    evidence_level: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    priority: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    error: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    fingerprint: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    briefing_id: Mapped[str | None] = mapped_column(
+        ForeignKey("briefings.briefing_id", ondelete="SET NULL"),
+        nullable=True,
     )

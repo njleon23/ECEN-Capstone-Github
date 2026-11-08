@@ -6,11 +6,9 @@ set in the server environment (SEC-001: the key never goes to the browser or int
 and the offline rule-based stand-in otherwise. Responses say which one produced them
 through ``briefing.model_id``.
 
-Jobs, briefings, and idempotency keys live in memory and are lost on restart. Sources live
-in the backend's ``sources`` table (added with ``POST /api/v1/sources`` and approved with
-``PATCH /api/v1/sources/{source_id}/approval``). ``sync_sources`` copies new sources and
-approval changes from that table into the retriever before each use, so the analysis always
-follows the table and never keeps its own approval state.
+Active analysis jobs are held in memory while they run. The API layer persists
+queued and terminal job snapshots, priorities, briefings, and idempotency keys
+in PostgreSQL. Job and briefing reads fall back to PostgreSQL after a restart.
 """
 
 from __future__ import annotations
