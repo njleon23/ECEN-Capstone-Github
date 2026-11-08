@@ -35,6 +35,7 @@ INSUFFICIENT_MESSAGE = ("The approved sources do not contain enough information 
 
 def answer_question(question: str, item: AgendaItem, retriever: Retriever,
                     provider: LLMProvider, *,
+                    source_ids: Optional[List[str]] = None,
                     score_config: ScoreConfig = DEFAULT_SCORE_CONFIG,
                     gen_config: GenerationConfig = DEFAULT_GENERATION_CONFIG,
                     sleep: Callable[[float], None] = time.sleep,
@@ -53,7 +54,7 @@ def answer_question(question: str, item: AgendaItem, retriever: Retriever,
     # Gate on the question ALONE. If the item title were part of the gate, an unrelated
     # question would still match the item's own topic and reach the model.
     k = gen_config.max_evidence_passages
-    direct = retriever.search(question, top_k=k, min_relevance=score_config.min_relevance,
+    direct = retriever.search(question, top_k=k, source_ids=source_ids, min_relevance=score_config.min_relevance,
                               min_matched_terms=score_config.min_matched_terms)
     if not direct:
         return AnswerResult(status="insufficient_evidence", error_code="INSUFFICIENT_EVIDENCE",
@@ -61,7 +62,7 @@ def answer_question(question: str, item: AgendaItem, retriever: Retriever,
     # Then add passages that match the question in the context of the item, so
     # references like "this developer" can pick up the item's own subject.
     contextual = retriever.search(
-        f"{question} {item.title}", top_k=k, min_relevance=score_config.min_relevance,
+        f"{question} {item.title}", top_k=k, source_ids=source_ids, min_relevance=score_config.min_relevance,
         min_matched_terms=score_config.min_matched_terms)
     seen = {r.passage.passage_id for r in direct}
     retrieved = list(direct) + [r for r in contextual if r.passage.passage_id not in seen]

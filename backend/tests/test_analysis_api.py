@@ -1,7 +1,14 @@
 """Analysis endpoints end to end: Nick's agenda upload, the sources, then analysis."""
 
-from api_helpers import (add_demo_sources, api, item_id, run_analysis,  # noqa: F401
-                         set_approval, upload_agenda)
+from api_helpers import (
+    add_demo_sources,
+    api,  # noqa: F401
+    attach_all_sources_to_item,
+    item_id,
+    run_analysis,
+    set_approval,
+    upload_agenda,
+)
 
 from app.analysis.errors import DependencyUnavailable
 from app.analysis.llm_client import OfflineExtractiveProvider
@@ -71,6 +78,11 @@ def test_procedural_item_is_completed_without_a_score(api):
 def test_agenda_batch_analysis_and_priority_list(api):
     agenda = upload_agenda(api)
     add_demo_sources(api)
+    for agenda_item in agenda["items"]:
+        attach_all_sources_to_item(
+            api,
+            agenda_item["item_id"],
+        )
     before = api.get(f"/api/v1/agendas/{agenda['agenda_id']}/priorities").json()
     assert {r["state"] for r in before["items"]} == {"not_analyzed"}
 
