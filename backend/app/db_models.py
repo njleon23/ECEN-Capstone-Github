@@ -371,3 +371,69 @@ class BriefingReviewRecord(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+class PriorityAdjustmentRecord(Base):
+    """One reviewer override of a priority factor (FSR ANA-007).
+
+    The analysis job keeps the current adjusted score. This table keeps every
+    adjustment, who made it and why, so the history is never lost.
+    """
+
+    __tablename__ = "priority_adjustments"
+    __table_args__ = (
+        Index(
+            "idx_priority_adjustments_item_created_at",
+            "item_id",
+            "created_at",
+        ),
+    )
+
+    adjustment_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    item_id: Mapped[str] = mapped_column(
+        ForeignKey("agenda_items.item_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    factor_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    old_value: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+    new_value: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+    old_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+    new_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+    new_category: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    reviewer: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

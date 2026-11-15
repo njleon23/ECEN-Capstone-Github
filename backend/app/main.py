@@ -18,6 +18,10 @@ from app.routers.briefing_reviews import (
     router as briefing_reviews_router,
 )
 
+from app.routers.priority_adjustments import (
+    router as priority_adjustments_router,
+)
+
 
 app = FastAPI(
     title="Council Brief API",
@@ -59,6 +63,7 @@ app.include_router(sources_router)
 app.include_router(source_associations_router)
 app.include_router(analysis_router)
 app.include_router(briefing_reviews_router)
+app.include_router(priority_adjustments_router)
 
 
 @app.get("/api/v1/health")

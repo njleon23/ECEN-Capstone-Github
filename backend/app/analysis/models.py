@@ -18,6 +18,16 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def utc_now_precise() -> str:
+    """Like utc_now but with microseconds, for ordering records created in the same second.
+
+    A job's start time is used to find the latest job for an item. With one-second
+    precision, two analyses started within the same second tie and the "latest" one
+    is chosen at random. API output still shows whole seconds.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 class Serializable:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)  # type: ignore[arg-type]
@@ -187,7 +197,7 @@ class AnalysisJob(Serializable):
     item_id: str
     state: str = "queued"
     progress_message: str = ""
-    created_at: str = field(default_factory=utc_now)
+    created_at: str = field(default_factory=utc_now_precise)
     completed_at: Optional[str] = None
     error: Optional[Dict[str, Any]] = None
     priority: Optional[PriorityResult] = None
