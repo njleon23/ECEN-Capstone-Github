@@ -1,12 +1,14 @@
 """Reviewer adjustment of priority factors, and the latest saved analysis.
 
 FSR ANA-007: a reviewer may change one factor only by giving a reason. The
-reviewer name is recorded with each change. The backend has no sign-in system
-yet, so the name is not verified; real authorization depends on the team's
-login decision.
+logged-in account username is recorded with each change. A reviewer name
+supplied by the browser is ignored.
 """
 
 from fastapi import APIRouter, Depends
+
+from app.auth_dependencies import require_reviewer
+from app.services.user_repository import UserSummary
 
 from app.analysis import item_store
 from app.analysis.errors import AnalyticsError
@@ -78,6 +80,7 @@ def get_latest_analysis(
 def adjust_priority_factor(
     item_id: str,
     body: PriorityAdjustmentCreate,
+    user: UserSummary = Depends(require_reviewer),
     service: AnalysisService = Depends(get_synced_service),
 ):
     try:
@@ -94,7 +97,7 @@ def adjust_priority_factor(
             factor_key=body.factor_key,
             new_raw_value=body.new_raw_value,
             reason=body.reason,
-            reviewer=body.reviewer,
+            reviewer=user.username,
             config=service.pipeline.score_config,
         )
     except NoAnalysisToAdjustError:

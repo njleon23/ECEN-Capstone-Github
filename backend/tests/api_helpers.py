@@ -16,12 +16,40 @@ from app.analysis.llm_client import OfflineExtractiveProvider
 from app.analysis.service import AnalysisService, set_service
 from app.database import SessionLocal
 from app.db_models import (
+    AuthSessionRecord,
     AgendaItemRecord,
     AgendaItemSourceRecord,
     AgendaRecord,
     SourceRecord,
+    UserRecord,
 )
 from app.main import app
+from app.services.authentication_service import login
+from app.services.user_repository import (
+    UsernameAlreadyExistsError,
+    create_user,
+)
+
+
+TEST_ACCOUNT_PASSWORD = "fictional-reviewer-password-2026"
+
+
+def authenticate_test_client(client, username="test-reviewer", role="reviewer"):
+    """Use a real database session, never an authorization override."""
+    try:
+        create_user(
+            username=username,
+            display_name="Test Reviewer",
+            password=TEST_ACCOUNT_PASSWORD,
+            role=role,
+        )
+    except UsernameAlreadyExistsError:
+        pass
+
+    session = login(username, TEST_ACCOUNT_PASSWORD)
+    assert session.user.role == role
+    client.headers["Authorization"] = f"Bearer {session.token}"
+    return session.user
 
 
 SAMPLE_AGENDA = (
@@ -40,6 +68,8 @@ def _clear_tables():
             SourceRecord,
             AgendaItemRecord,
             AgendaRecord,
+            AuthSessionRecord,
+            UserRecord,
         ):
             database.execute(delete(table))
 
@@ -50,9 +80,13 @@ def api(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     _clear_tables()
     set_service(AnalysisService(OfflineExtractiveProvider()))
-    yield TestClient(app)
-    set_service(None)
-    _clear_tables()
+    try:
+        with TestClient(app) as client:
+            authenticate_test_client(client)
+            yield client
+    finally:
+        set_service(None)
+        _clear_tables()
 
 
 def upload_agenda(client):

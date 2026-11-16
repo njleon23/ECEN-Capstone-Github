@@ -1,16 +1,11 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-
-from app.main import app
+from api_helpers import api  # noqa: F401
 from app.services.agenda_repository import get_agenda
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import main as main_module
-
-client = TestClient(app)
 
 SAMPLE_AGENDA = (
     Path(__file__).resolve().parents[2]
@@ -20,16 +15,16 @@ SAMPLE_AGENDA = (
 )
 
 
-def test_health_endpoint():
-    response = client.get("/api/v1/health")
+def test_health_endpoint(api):
+    response = api.get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
     assert response.json()["database"] == "connected"
 
-def test_upload_and_retrieve_agenda():
+def test_upload_and_retrieve_agenda(api):
     with SAMPLE_AGENDA.open("rb") as agenda_file:
-        response = client.post(
+        response = api.post(
             "/api/v1/agendas",
             files={
                 "file": (
@@ -59,7 +54,7 @@ def test_upload_and_retrieve_agenda():
 
     agenda_id = agenda["agenda_id"]
 
-    retrieval_response = client.get(f"/api/v1/agendas/{agenda_id}")
+    retrieval_response = api.get(f"/api/v1/agendas/{agenda_id}")
 
     assert retrieval_response.status_code == 200
     assert retrieval_response.json()["agenda_id"] == agenda_id
@@ -70,8 +65,8 @@ def test_upload_and_retrieve_agenda():
     assert len(stored_agenda.items) == 15
 
 
-def test_reject_unsupported_file():
-    response = client.post(
+def test_reject_unsupported_file(api):
+    response = api.post(
         "/api/v1/agendas",
         files={
             "file": (
@@ -86,9 +81,9 @@ def test_reject_unsupported_file():
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
 
 
-def test_list_agendas():
+def test_list_agendas(api):
     with SAMPLE_AGENDA.open("rb") as agenda_file:
-        upload_response = client.post(
+        upload_response = api.post(
             "/api/v1/agendas",
             files={
                 "file": (
@@ -106,7 +101,7 @@ def test_list_agendas():
     assert upload_response.status_code == 201
 
     uploaded_agenda = upload_response.json()
-    response = client.get("/api/v1/agendas")
+    response = api.get("/api/v1/agendas")
 
     assert response.status_code == 200
 
@@ -116,7 +111,7 @@ def test_list_agendas():
     assert uploaded_agenda["agenda_id"] in agenda_ids
 
 
-def test_create_and_list_sources():
+def test_create_and_list_sources(api):
     source_payload = {
         "title": "FY 2027 Proposed Budget",
         "source_type": "budget",
@@ -127,7 +122,7 @@ def test_create_and_list_sources():
         "approved": True,
     }
 
-    create_response = client.post(
+    create_response = api.post(
         "/api/v1/sources",
         json=source_payload,
     )
@@ -138,11 +133,12 @@ def test_create_and_list_sources():
 
     assert created_source["title"] == source_payload["title"]
     assert created_source["source_type"] == "budget"
-    assert created_source["approved"] is True
+    # Even an authenticated caller must use the approval endpoint separately.
+    assert created_source["approved"] is False
     assert created_source["source_id"]
     assert created_source["ingested_at"]
 
-    list_response = client.get("/api/v1/sources")
+    list_response = api.get("/api/v1/sources")
 
     assert list_response.status_code == 200
 
@@ -152,8 +148,8 @@ def test_create_and_list_sources():
     assert created_source["source_id"] in source_ids
 
 
-def test_reject_invalid_source_type():
-    response = client.post(
+def test_reject_invalid_source_type(api):
+    response = api.post(
         "/api/v1/sources",
         json={
             "title": "Invalid Source",
@@ -165,17 +161,19 @@ def test_reject_invalid_source_type():
     assert response.status_code == 422
 
 
-def test_health_endpoint_reports_database_failure(monkeypatch):
+def test_health_endpoint_reports_database_failure(api, monkeypatch):
     def fail_connection():
         raise SQLAlchemyError("Database unavailable")
 
-    monkeypatch.setattr(
-        main_module.engine,
-        "connect",
-        fail_connection,
-    )
+    # Restore the real connection before fixture cleanup runs.
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            main_module.engine,
+            "connect",
+            fail_connection,
+        )
 
-    response = client.get("/api/v1/health")
+        response = api.get("/api/v1/health")
 
     assert response.status_code == 503
     assert response.json()["status"] == "unhealthy"

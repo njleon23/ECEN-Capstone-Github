@@ -1,3 +1,4 @@
+// FollowUpBox.tsx
 import { useState } from "react"
 import { Loader2, MessageSquare } from "lucide-react"
 
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 import { askFollowUp, FollowUpResult } from "./analysisApi"
+import { ApiError } from "./api"
 
 const STATUS_LABEL: Record<FollowUpResult["status"], string> = {
   answered: "Answered from approved sources",
@@ -22,7 +24,15 @@ const STATUS_STYLE: Record<FollowUpResult["status"], string> = {
 }
 
 /** Follow-up questions for one agenda item, answered only from approved sources. */
-export function FollowUpBox({ itemId }: { itemId: string }) {
+export function FollowUpBox({ 
+  itemId, 
+  token,
+  onApiError
+}: { 
+  itemId: string; 
+  token: string | null;
+  onApiError: (error: unknown, fallback: string) => void;
+}) {
   const [question, setQuestion] = useState("")
   const [asking, setAsking] = useState(false)
   const [result, setResult] = useState<FollowUpResult | null>(null)
@@ -32,8 +42,12 @@ export function FollowUpBox({ itemId }: { itemId: string }) {
     if (!trimmed || asking) return
     setAsking(true)
     try {
-      setResult(await askFollowUp(itemId, trimmed))
-    } catch {
+      setResult(await askFollowUp(itemId, trimmed, token))
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 429)) {
+        onApiError(error, "Failed to ask question.")
+        return
+      }
       setResult({ status: "error", text: "The backend could not be reached.", citations: [] })
     } finally {
       setAsking(false)

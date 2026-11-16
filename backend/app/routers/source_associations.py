@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.auth_dependencies import require_reviewer
 
 from app.models import (
     SourceAttachmentResponse,
@@ -25,6 +27,7 @@ router = APIRouter(
 @router.post(
     "/agenda-items/{item_id}/sources/{source_id}",
     response_model=SourceAttachmentResponse,
+    dependencies=[Depends(require_reviewer)],
 )
 def attach_source(
     item_id: str,
@@ -87,6 +90,7 @@ def get_item_sources(item_id: str):
 @router.delete(
     "/agenda-items/{item_id}/sources/{source_id}",
     response_model=SourceDetachmentResponse,
+    dependencies=[Depends(require_reviewer)],
 )
 def detach_source(
     item_id: str,

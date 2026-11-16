@@ -1,4 +1,6 @@
 import os
+from fastapi.exceptions import RequestValidationError
+from app.auth_validation import handle_request_validation
 from fastapi import FastAPI, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -9,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers.agendas import router as agendas_router
 from app.routers.sources import router as sources_router
 from app.routers.analysis import router as analysis_router
-
+from app.routers.auth import router as auth_router
 from app.routers.source_associations import (
     router as source_associations_router,
 )
@@ -26,6 +28,11 @@ from app.routers.priority_adjustments import (
 app = FastAPI(
     title="Council Brief API",
     version="0.1.0",
+)
+
+app.add_exception_handler(
+    RequestValidationError,
+    handle_request_validation,
 )
 
 CORS_ORIGINS_ENV = "CORS_ORIGINS"
@@ -64,6 +71,7 @@ app.include_router(source_associations_router)
 app.include_router(analysis_router)
 app.include_router(briefing_reviews_router)
 app.include_router(priority_adjustments_router)
+app.include_router(auth_router)
 
 
 @app.get("/api/v1/health")

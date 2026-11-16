@@ -2,10 +2,12 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.auth_dependencies import require_reviewer
 from app.models import AgendaResponse
+from app.services.user_repository import UserSummary
 from app.services.agenda_parser import (
     AgendaParserError,
     OCRRequiredError,
@@ -60,6 +62,7 @@ async def upload_agenda(
     meeting_date: date | None = Form(None),
     source_url: str | None = Form(None),
     client_version: str | None = Form(None),
+    user: UserSummary = Depends(require_reviewer),
 ):
     file_name = file.filename or "unnamed"
     extension = Path(file_name).suffix.lower()
@@ -131,7 +134,7 @@ async def upload_agenda(
         meeting_date=meeting_date,
         version_id=str(uuid4()),
         original_file_name=file_name,
-        uploader="local_prototype_user",
+        uploader=user.username,
         source_url=source_url,
         client_version=client_version,
         uploaded_at=datetime.now(timezone.utc),

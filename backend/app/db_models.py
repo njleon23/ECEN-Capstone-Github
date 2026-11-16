@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -436,4 +437,117 @@ class PriorityAdjustmentRecord(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+
+class UserRecord(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint(
+            "username",
+            name="uq_users_username",
+        ),
+        CheckConstraint(
+            "role IN ('admin', 'reviewer')",
+            name="ck_users_role",
+        ),
+        CheckConstraint(
+            "username = lower(trim(username))",
+            name="ck_users_username_normalized",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    username: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+    )
+    display_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+    )
+    password_hash: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="reviewer",
+        server_default="reviewer",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    sessions: Mapped[list[AuthSessionRecord]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AuthSessionRecord(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "token_hash",
+            name="uq_auth_sessions_token_hash",
+        ),
+        Index(
+            "idx_auth_sessions_user_id",
+            "user_id",
+        ),
+        Index(
+            "idx_auth_sessions_expires_at",
+            "expires_at",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_auth_sessions_expiration",
+        ),
+    )
+
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "users.user_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    user: Mapped[UserRecord] = relationship(
+        back_populates="sessions",
     )

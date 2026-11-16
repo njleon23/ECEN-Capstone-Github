@@ -5,7 +5,7 @@
 // (score, category, key_facts, anticipated_questions, talking_points, priority.factors).
 // The backend decides the score and the category; nothing here calculates either.
 
-import { API_BASE_URL } from "./api"
+import { API_BASE_URL, ApiError, readErrorMessage } from "./api"
 
 export type Category = "Low" | "Moderate" | "High"
 export type Support = "supported" | "uncertain" | "unsupported"
@@ -132,13 +132,9 @@ const round = (value: number, digits = 2) => {
   return Math.round(value * factor) / factor
 }
 
-async function errorMessage(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = await response.json()
-    return body?.error?.message ?? body?.detail ?? fallback
-  } catch {
-    return fallback
-  }
+/** 401 (session problem) and 429 (rate limit) are handled by the screen, so they are rethrown. */
+function isAuthOrRateLimit(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 401 || error.status === 429)
 }
 
 function toUiCitation(c: ApiCitation): UiCitation {
@@ -265,7 +261,9 @@ export function jobToFields(job: ApiJob): AnalysisFields {
 async function waitForJob(jobId: string, tries = 240, delayMs = 500): Promise<ApiJob> {
   for (let attempt = 0; attempt < tries; attempt++) {
     const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`)
-    if (!response.ok) throw new Error(await errorMessage(response, "The analysis job could not be read."))
+    if (!response.ok) {
+      throw new ApiError(await readErrorMessage(response, "The analysis job could not be read."), response.status)
+    }
     const job = (await response.json()) as ApiJob
     if (job.state === "completed" || job.state === "degraded" || job.state === "failed") return job
     await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs))
@@ -277,20 +275,33 @@ function failedFields(message: string): AnalysisFields {
   return { ...(withAnalysisDefaults({}) as AnalysisFields), analysisState: "failed", missingInformation: [message] }
 }
 
-async function analyzeOne(itemId: string): Promise<AnalysisFields> {
+async function analyzeOne(itemId: string, token: string | null): Promise<AnalysisFields> {
   try {
-    const started = await fetch(`${API_BASE_URL}/items/${itemId}/analyses`, { method: "POST" })
-    if (!started.ok) return failedFields(await errorMessage(started, "The analysis could not be started."))
+    const headers: HeadersInit = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+
+    const started = await fetch(`${API_BASE_URL}/items/${itemId}/analyses`, {
+      method: "POST",
+      headers,
+    })
+    if (!started.ok) {
+      const message = await readErrorMessage(started, "The analysis could not be started.")
+      if (started.status === 401 || started.status === 429) throw new ApiError(message, started.status)
+      return failedFields(message)
+    }
     const { job_id } = (await started.json()) as { job_id: string }
     return jobToFields(await waitForJob(job_id))
   } catch (error) {
+    // Session and rate-limit problems go to the screen, which signs the user in again or shows the retry message.
+    if (isAuthOrRateLimit(error)) throw error
     return failedFields(error instanceof Error ? error.message : "The analysis failed.")
   }
 }
 
 /**
  * Analyzes one agenda item: one request to start the job, then polling until it finishes.
- * Failures come back as a result with analysisState "failed" and a message, not as an exception.
+ * Most failures come back as a result with analysisState "failed" and a message.
+ * A 401 or 429 is thrown as an ApiError so the screen can handle it.
  * A whole-agenda option can be added later; it should keep the agenda id so other agendas are not analyzed.
  */
 export const analyzeItem = analyzeOne
@@ -304,20 +315,28 @@ export function writerLabel(modelId?: string): string {
 }
 
 /** Approves or withdraws a source. Only approved sources are ever used by the analysis. */
-export async function setSourceApproval(sourceId: string, approved: boolean): Promise<void> {
+export async function setSourceApproval(sourceId: string, approved: boolean, token: string | null): Promise<void> {
+  const headers: HeadersInit = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/sources/${sourceId}/approval`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ approved }),
   })
-  if (!response.ok) throw new Error(await errorMessage(response, "The approval could not be saved."))
+  if (!response.ok) {
+    throw new ApiError(await readErrorMessage(response, "The approval could not be saved."), response.status)
+  }
 }
 
 /** Asks a follow-up question about one item. Refusals and "insufficient evidence" are normal results. */
-export async function askFollowUp(itemId: string, question: string): Promise<FollowUpResult> {
+export async function askFollowUp(itemId: string, question: string, token: string | null): Promise<FollowUpResult> {
+  const headers: HeadersInit = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/items/${itemId}/questions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ question }),
   })
   if (response.ok) {
@@ -328,14 +347,22 @@ export async function askFollowUp(itemId: string, question: string): Promise<Fol
       citations: (body.citations ?? []).map(toUiCitation),
     }
   }
+
+  // Read the body once, then decide what it means.
   let code = ""
   let message = "The question could not be answered."
   try {
     const body = await response.json()
-    code = body?.error?.code ?? ""
-    message = body?.error?.message ?? body?.detail?.[0]?.msg ?? message
+    const detail = body?.detail
+    code = body?.error?.code ?? (detail && typeof detail === "object" && !Array.isArray(detail) ? detail.code ?? "" : "")
+    if (detail && typeof detail === "object" && !Array.isArray(detail) && typeof detail.message === "string") message = detail.message
+    else if (typeof detail === "string") message = detail
+    else if (Array.isArray(detail) && typeof detail[0]?.msg === "string") message = detail[0].msg
+    else if (typeof body?.error?.message === "string") message = body.error.message
   } catch {
     // keep the fallback message
   }
+
+  if (response.status === 401 || response.status === 429) throw new ApiError(message, response.status)
   return { status: code === "INSUFFICIENT_EVIDENCE" ? "insufficient_evidence" : "error", text: message, citations: [] }
 }

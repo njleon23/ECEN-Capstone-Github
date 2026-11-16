@@ -93,12 +93,15 @@ def git_commit() -> str:
         return "unknown"
 
 
-def collect(base: str) -> Dict[str, Any]:
+def collect(base: str, username: str | None = None) -> Dict[str, Any]:
     run = Run(base)
     try:
         run.client.get("/api/v1/health").raise_for_status()
     except httpx.HTTPError:
         raise SystemExit(f"Cannot reach {base}. Start the backend first: python3 -m uvicorn app.main:app")
+
+    from app.demo_auth import authenticate_demo_client
+    authenticate_demo_client(run.client, username)
 
     now = datetime.now(timezone.utc)
     result: Dict[str, Any] = {"collected_at": now.strftime("%Y-%m-%d %H:%M UTC"), "base_url": base,
@@ -292,11 +295,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--check-persisted", action="store_true")
+    ap.add_argument("--username", help="Reviewer username; password is prompted privately")
     args = ap.parse_args()
     if args.check_persisted:
         return check_persisted(args.base)
 
-    result = collect(args.base)
+    result = collect(args.base, args.username)
     EVIDENCE_DIR.mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     md = to_markdown(result)
