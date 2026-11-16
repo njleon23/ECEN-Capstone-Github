@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers.agendas import router as agendas_router
 from app.routers.sources import router as sources_router
 from app.routers.analysis import router as analysis_router
-
+from app.routers.auth import router as auth_router
 from app.routers.source_associations import (
     router as source_associations_router,
 )
@@ -64,6 +64,7 @@ app.include_router(source_associations_router)
 app.include_router(analysis_router)
 app.include_router(briefing_reviews_router)
 app.include_router(priority_adjustments_router)
+app.include_router(auth_router)
 
 
 @app.get("/api/v1/health")
