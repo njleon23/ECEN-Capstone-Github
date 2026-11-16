@@ -32,6 +32,7 @@ def wait(client, status_url, tries=60):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8000")
+    ap.add_argument("--username", help="Reviewer username; password is prompted privately")
     args = ap.parse_args()
     c = httpx.Client(base_url=args.base, timeout=30)
 
@@ -40,6 +41,9 @@ def main() -> int:
     except httpx.HTTPError:
         print(f"Cannot reach {args.base}. Start it with: python -m uvicorn app.main:app")
         return 1
+
+    from app.demo_auth import authenticate_demo_client
+    authenticate_demo_client(c, args.username)
 
     heading("1. Upload the sample agenda (Nick's endpoint)")
     with SAMPLE_AGENDA.open("rb") as f:

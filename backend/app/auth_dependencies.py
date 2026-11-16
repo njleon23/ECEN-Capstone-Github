@@ -65,6 +65,21 @@ def get_current_user(
         raise authentication_storage_error() from None
 
 
+def require_reviewer(
+    user: UserSummary = Depends(get_current_user),
+) -> UserSummary:
+    if user.role not in {"admin", "reviewer"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "PERMISSION_DENIED",
+                "message": "A reviewer or administrator account is required.",
+            },
+        )
+
+    return user
+
+
 def require_admin(
     user: UserSummary = Depends(get_current_user),
 ) -> UserSummary:

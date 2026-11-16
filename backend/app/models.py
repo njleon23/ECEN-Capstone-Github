@@ -84,9 +84,12 @@ class BriefingReviewUpdate(BaseModel):
         "approved",
         "rejected",
     ]
-    reviewer: str = Field(
+    reviewer: str | None = Field(
+        default=None,
         min_length=1,
         max_length=200,
+        deprecated=True,
+        description="Ignored. The logged-in account supplies the reviewer.",
     )
     comments: str = Field(
         default="",
@@ -124,7 +127,13 @@ class PriorityAdjustmentCreate(BaseModel):
     factor_key: str = Field(min_length=1, max_length=64)
     new_raw_value: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=2000)
-    reviewer: str = Field(min_length=1, max_length=200)
+    reviewer: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        deprecated=True,
+        description="Ignored. The logged-in account supplies the reviewer.",
+    )
 
 
 class PriorityAdjustmentResponse(BaseModel):

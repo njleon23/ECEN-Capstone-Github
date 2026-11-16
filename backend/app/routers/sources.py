@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.auth_dependencies import require_reviewer
 
 from app.models import (
     SourceApprovalUpdate,
@@ -24,10 +26,12 @@ router = APIRouter(prefix="/api/v1", tags=["sources"])
     "/sources",
     response_model=SourceResponse,
     status_code=201,
+    dependencies=[Depends(require_reviewer)],
 )
 def create_source(source: SourceCreate):
     response = SourceResponse(
-        **source.model_dump(),
+        **source.model_dump(exclude={"approved"}),
+        approved=False,
         source_id=str(uuid4()),
         ingested_at=datetime.now(timezone.utc),
     )
@@ -64,6 +68,7 @@ def get_sources():
 @router.patch(
     "/sources/{source_id}/approval",
     response_model=SourceResponse,
+    dependencies=[Depends(require_reviewer)],
 )
 def update_source_approval(
     source_id: str,

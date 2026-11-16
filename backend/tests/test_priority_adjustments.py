@@ -2,6 +2,7 @@
 
 from api_helpers import (
     add_demo_sources,
+    authenticate_test_client,
     api,  # noqa: F401
     item_id,
     run_analysis,
@@ -46,13 +47,13 @@ def test_adjustment_changes_score_and_is_recorded(api):
     assert saved["factor_key"] == "public_discussion"
     assert saved["old_score"] == before["score"]
     assert saved["new_score"] > before["score"]
-    assert saved["reviewer"] == "analyst-1"
+    assert saved["reviewer"] == "test-reviewer"
     assert "petition" in saved["reason"]
 
     updated = api.get(f"/api/v1/jobs/{job['job_id']}").json()["priority"]
     assert updated["score"] == saved["new_score"]
     assert updated["category"] == saved["new_category"]
-    assert updated["manual_adjustment"]["reviewer_id"] == "analyst-1"
+    assert updated["manual_adjustment"]["reviewer_id"] == "test-reviewer"
     factor = next(f for f in updated["factors"] if f["key"] == "public_discussion")
     assert factor["raw_value"] == 1.0
     assert "adjusted by reviewer" in factor["explanation"]
@@ -101,6 +102,7 @@ def test_history_keeps_every_adjustment_in_order(api):
     _, agenda_item_id, _ = analyzed_item(api)
 
     first = adjust(api, agenda_item_id, new_raw_value=1.0, reviewer="analyst-1").json()
+    authenticate_test_client(api, username="analyst-2")
     second = adjust(
         api,
         agenda_item_id,
@@ -117,7 +119,7 @@ def test_history_keeps_every_adjustment_in_order(api):
         second["adjustment_id"],
     ]
     assert history[1]["old_score"] == first["new_score"]
-    assert [h["reviewer"] for h in history] == ["analyst-1", "analyst-2"]
+    assert [h["reviewer"] for h in history] == ["test-reviewer", "analyst-2"]
 
 
 def test_new_analysis_starts_unadjusted_but_history_is_kept(api):

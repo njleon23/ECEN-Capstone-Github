@@ -1,8 +1,6 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from app.main import app
+from api_helpers import api  # noqa: F401
 from app.services.source_association_repository import (
     AgendaItemNotFoundError,
     SourceNotFoundError,
@@ -16,8 +14,6 @@ from app.services.source_repository import (
 )
 
 
-client = TestClient(app)
-
 SAMPLE_AGENDA = (
     Path(__file__).resolve().parents[2]
     / "council-brief"
@@ -26,7 +22,7 @@ SAMPLE_AGENDA = (
 )
 
 
-def create_test_item() -> str:
+def create_test_item(client) -> str:
     with SAMPLE_AGENDA.open("rb") as agenda_file:
         response = client.post(
             "/api/v1/agendas",
@@ -44,7 +40,7 @@ def create_test_item() -> str:
     return response.json()["items"][0]["item_id"]
 
 
-def create_test_source() -> str:
+def create_test_source(client) -> str:
     response = client.post(
         "/api/v1/sources",
         json={
@@ -59,8 +55,8 @@ def create_test_source() -> str:
     return response.json()["source_id"]
 
 
-def test_source_approval_persists():
-    source_id = create_test_source()
+def test_source_approval_persists(api):
+    source_id = create_test_source(api)
 
     updated_source = set_source_approval(source_id, True)
 
@@ -73,9 +69,9 @@ def test_source_approval_persists():
     assert stored_source.approved is True
 
 
-def test_attach_list_and_detach_source():
-    item_id = create_test_item()
-    source_id = create_test_source()
+def test_attach_list_and_detach_source(api):
+    item_id = create_test_item(api)
+    source_id = create_test_source(api)
 
     assert attach_source_to_item(item_id, source_id) is True
     assert attach_source_to_item(item_id, source_id) is False
@@ -90,9 +86,9 @@ def test_attach_list_and_detach_source():
     assert list_sources_for_item(item_id) == []
 
 
-def test_source_association_rejects_missing_records():
-    item_id = create_test_item()
-    source_id = create_test_source()
+def test_source_association_rejects_missing_records(api):
+    item_id = create_test_item(api)
+    source_id = create_test_source(api)
 
     try:
         attach_source_to_item("missing-item", source_id)
@@ -106,10 +102,10 @@ def test_source_association_rejects_missing_records():
     except SourceNotFoundError:
         pass
 
-def test_source_approval_endpoint():
-    source_id = create_test_source()
+def test_source_approval_endpoint(api):
+    source_id = create_test_source(api)
 
-    response = client.patch(
+    response = api.patch(
         f"/api/v1/sources/{source_id}/approval",
         json={"approved": True},
     )
@@ -118,7 +114,7 @@ def test_source_approval_endpoint():
     assert response.json()["source_id"] == source_id
     assert response.json()["approved"] is True
 
-    missing_response = client.patch(
+    missing_response = api.patch(
         "/api/v1/sources/missing-source/approval",
         json={"approved": True},
     )
@@ -130,11 +126,11 @@ def test_source_approval_endpoint():
     )
 
 
-def test_source_association_endpoints():
-    item_id = create_test_item()
-    source_id = create_test_source()
+def test_source_association_endpoints(api):
+    item_id = create_test_item(api)
+    source_id = create_test_source(api)
 
-    attach_response = client.post(
+    attach_response = api.post(
         f"/api/v1/agenda-items/{item_id}/sources/{source_id}"
     )
 
@@ -145,14 +141,14 @@ def test_source_association_endpoints():
         "created": True,
     }
 
-    duplicate_response = client.post(
+    duplicate_response = api.post(
         f"/api/v1/agenda-items/{item_id}/sources/{source_id}"
     )
 
     assert duplicate_response.status_code == 200
     assert duplicate_response.json()["created"] is False
 
-    list_response = client.get(
+    list_response = api.get(
         f"/api/v1/agenda-items/{item_id}/sources"
     )
 
@@ -160,14 +156,14 @@ def test_source_association_endpoints():
     assert len(list_response.json()) == 1
     assert list_response.json()[0]["source_id"] == source_id
 
-    detach_response = client.delete(
+    detach_response = api.delete(
         f"/api/v1/agenda-items/{item_id}/sources/{source_id}"
     )
 
     assert detach_response.status_code == 200
     assert detach_response.json()["removed"] is True
 
-    repeated_detach_response = client.delete(
+    repeated_detach_response = api.delete(
         f"/api/v1/agenda-items/{item_id}/sources/{source_id}"
     )
 
@@ -175,11 +171,11 @@ def test_source_association_endpoints():
     assert repeated_detach_response.json()["removed"] is False
 
 
-def test_source_association_endpoints_return_not_found():
-    item_id = create_test_item()
-    source_id = create_test_source()
+def test_source_association_endpoints_return_not_found(api):
+    item_id = create_test_item(api)
+    source_id = create_test_source(api)
 
-    missing_item_response = client.post(
+    missing_item_response = api.post(
         f"/api/v1/agenda-items/missing-item/sources/{source_id}"
     )
 
@@ -189,7 +185,7 @@ def test_source_association_endpoints_return_not_found():
         == "AGENDA_ITEM_NOT_FOUND"
     )
 
-    missing_source_response = client.post(
+    missing_source_response = api.post(
         f"/api/v1/agenda-items/{item_id}/sources/missing-source"
     )
 

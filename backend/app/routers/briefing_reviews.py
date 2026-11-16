@@ -1,4 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.auth_dependencies import require_reviewer
+from app.services.user_repository import UserSummary
 
 from app.models import (
     BriefingReviewResponse,
@@ -43,12 +46,13 @@ def _not_found():
 def update_briefing_review(
     briefing_id: str,
     body: BriefingReviewUpdate,
+    user: UserSummary = Depends(require_reviewer),
 ):
     try:
         review = save_briefing_review(
             briefing_id=briefing_id,
             status=body.status,
-            reviewer=body.reviewer,
+            reviewer=user.username,
             comments=body.comments,
         )
     except BriefingReviewRepositoryError:

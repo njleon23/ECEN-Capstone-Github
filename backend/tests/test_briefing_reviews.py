@@ -40,7 +40,7 @@ def test_approved_review_survives_restart(api):
 
     assert review["briefing_id"] == briefing_id
     assert review["status"] == "approved"
-    assert review["reviewer"] == "Test Reviewer"
+    assert review["reviewer"] == "test-reviewer"
     assert review["comments"] == (
         "Verified against the approved sources."
     )

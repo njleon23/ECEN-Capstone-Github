@@ -1,4 +1,6 @@
 import os
+from fastapi.exceptions import RequestValidationError
+from app.auth_validation import handle_request_validation
 from fastapi import FastAPI, Response, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,6 +28,11 @@ from app.routers.priority_adjustments import (
 app = FastAPI(
     title="Council Brief API",
     version="0.1.0",
+)
+
+app.add_exception_handler(
+    RequestValidationError,
+    handle_request_validation,
 )
 
 CORS_ORIGINS_ENV = "CORS_ORIGINS"

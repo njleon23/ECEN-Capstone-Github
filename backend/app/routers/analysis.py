@@ -12,6 +12,8 @@ from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Header
 from pydantic import BaseModel, Field
 
+from app.auth_dependencies import require_reviewer
+
 from app.analysis import item_store
 from app.analysis.errors import AnalyticsError, InvalidRequest
 from app.analysis.scoring import is_procedural
@@ -115,7 +117,11 @@ def _run_and_save_job(
     save_analysis_job(job)
 
 
-@router.post("/items/{item_id}/analyses", status_code=202)
+@router.post(
+    "/items/{item_id}/analyses",
+    status_code=202,
+    dependencies=[Depends(require_reviewer)],
+)
 def start_item_analysis(
     item_id: str,
     background: BackgroundTasks,
@@ -187,7 +193,11 @@ def start_item_analysis(
     }
 
 
-@router.post("/agendas/{agenda_id}/analyses", status_code=202)
+@router.post(
+    "/agendas/{agenda_id}/analyses",
+    status_code=202,
+    dependencies=[Depends(require_reviewer)],
+)
 def start_agenda_analysis(
     agenda_id: str,
     background: BackgroundTasks,
@@ -387,7 +397,10 @@ def get_briefing(
     return briefing.to_dict()
 
 
-@router.post("/items/{item_id}/questions")
+@router.post(
+    "/items/{item_id}/questions",
+    dependencies=[Depends(require_reviewer)],
+)
 def ask_question(
     item_id: str,
     body: QuestionRequest,
