@@ -3,12 +3,10 @@ import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"
 import {
   AlertTriangle,
   BarChart3,
-  BookOpen,
   Check,
   CheckCircle2,
   ChevronRight,
   CircleGauge,
-  ClipboardCheck,
   Download,
   ExternalLink,
   FileSearch,
@@ -33,7 +31,6 @@ import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -49,8 +46,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
 
-// Import our FastAPI backend service layer instead of static mock data
-import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord } from "./api"
+import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
 import { analyzeItem, categoryLabel, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
@@ -88,7 +84,6 @@ async function extractFileText(file: File) {
     }
     return pages.join("\n")
   }
-
   return file.text()
 }
 
@@ -110,14 +105,12 @@ export default function App() {
   const [briefTab, setBriefTab] = useState("briefing")
   const [query, setQuery] = useState("")
   
-  // Authentication State
   const [token, setToken] = useState<string | null>(null)
   const [loginOpen, setLoginOpen] = useState(false)
   const [loginUser, setLoginUser] = useState("")
   const [loginPass, setLoginPass] = useState("")
   const [loginLoading, setLoginLoading] = useState(false)
 
-  // Upload & processing state
   const [uploadOpen, setUploadOpen] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
@@ -132,7 +125,6 @@ export default function App() {
       setIsLoading(true)
       setError(null)
       try {
-        // Fetching lists remains public per backend rules
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
           setItems(agendaData.map(withAnalysisDefaults))
@@ -144,7 +136,7 @@ export default function App() {
       } catch (err) {
         console.error("Failed to connect to FastAPI backend:", err)
         setError("Could not connect to the backend database. The Python server may be offline.")
-        toast.error("Could not connect to FastAPI backend on port 8000.")
+        toast.error("Could not connect to FastAPI backend.")
       } finally {
         setIsLoading(false)
       }
@@ -152,23 +144,38 @@ export default function App() {
     loadBackendData()
   }, [])
 
-  // Authentication Handlers
+  const handleProtectedActionError = (error: unknown, fallbackMsg: string) => {
+    if (error instanceof ApiError && error.status === 401) {
+      setToken(null)
+      setLoginOpen(true)
+      toast.error("Your session has expired. Please sign in again.")
+      return
+    }
+    if (error instanceof ApiError && error.status === 429) {
+      toast.error(error.message || "Too many requests. Please wait a moment and try again.")
+      return
+    }
+    toast.error(error instanceof Error ? error.message : fallbackMsg)
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoginLoading(true)
     try {
-      // FastAPI OAuth2PasswordRequestForm expects form-urlencoded
-      const formData = new URLSearchParams()
-      formData.append("username", loginUser)
-      formData.append("password", loginPass)
-
-      const res = await fetch("/api/v1/auth/login", {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser, password: loginPass })
       })
       
-      if (!res.ok) throw new Error("Invalid credentials")
+      if (!res.ok) {
+        const errorMsg = await readErrorMessage(res, "Login failed. Please check your credentials.")
+        if (res.status === 401) {
+          setToken(null)
+          setLoginOpen(true)
+        }
+        throw new Error(errorMsg)
+      }
       
       const data = await res.json()
       setToken(data.access_token)
@@ -177,7 +184,7 @@ export default function App() {
       setLoginPass("")
       toast.success("Successfully logged in.")
     } catch (err) {
-      toast.error("Login failed. Please check your credentials.")
+      toast.error(err instanceof Error ? err.message : "An unexpected error occurred.")
     } finally {
       setLoginLoading(false)
     }
@@ -186,12 +193,25 @@ export default function App() {
   const handleLogout = async () => {
     if (token) {
       try {
-        await fetch("/api/v1/auth/logout", {
+        const res = await fetch(`${API_BASE_URL}/auth/logout`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` }
         })
+        
+        if (!res.ok) {
+          toast.warning(
+            res.status === 401
+              ? "Your session had already expired. You are signed out."
+              : "Signed out on this device, but the server did not confirm the logout."
+          )
+          setToken(null)
+          return
+        }
       } catch (err) {
         console.error("Logout request failed", err)
+        toast.warning("Signed out on this device, but the server did not confirm the logout.")
+        setToken(null)
+        return
       }
     }
     setToken(null)
@@ -230,13 +250,12 @@ export default function App() {
     const itemId = selected.id
     setAnalyzing(true)
     try {
-      // Pass token down to the API function
       const result = await analyzeItem(itemId, token)
       setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...result } : item)))
       if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
     } catch (error) {
-       toast.error("Failed to run analysis. Check permissions.")
+       handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
     } finally {
       setAnalyzing(false)
     }
@@ -246,12 +265,11 @@ export default function App() {
     if (!checkAuth()) return;
     const next = !source.approved
     try {
-      // Pass token down to the API function
       await setSourceApproval(source.id, next, token)
       setSources((current) => current.map((s) => (s.id === source.id ? { ...s, approved: next } : s)))
       toast.success(next ? "Source approved. Run the analysis again to use it." : "Source approval withdrawn.")
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "The approval could not be saved.")
+    } catch (error) {
+      handleProtectedActionError(error, "The approval could not be saved.")
     }
   }
 
@@ -263,7 +281,6 @@ export default function App() {
     }
     setProcessing(true)
     try {
-      // Pass token down to the API function
       await uploadAgendaPdf(agendaFile, token)
       const updatedAgendas = await fetchAgendas()
       setItems(updatedAgendas.map(withAnalysisDefaults))
@@ -276,7 +293,7 @@ export default function App() {
       toast.success("Agenda packet successfully uploaded and processed by FastAPI.")
     } catch (error) {
       console.error(error)
-      toast.error("The file could not be processed. Please check permissions.")
+      handleProtectedActionError(error, "The file could not be processed. Please check permissions.")
     } finally {
       setProcessing(false)
     }
@@ -300,7 +317,6 @@ export default function App() {
         fileName: sourceFile?.name,
       }
 
-      // Pass token down to the API function
       const savedSource = await addSourceRecord(newSource, token)
       setSources((current) => [savedSource, ...current])
       if (selected) {
@@ -313,7 +329,7 @@ export default function App() {
       toast.success("Source successfully registered with backend.")
     } catch (error) {
       console.error(error)
-      toast.error("The source could not be saved to the backend.")
+      handleProtectedActionError(error, "The source could not be saved to the backend.")
     } finally {
       setProcessing(false)
     }
@@ -379,7 +395,7 @@ export default function App() {
               FastAPI Connected
             </div>
             <p className="text-sm leading-5 text-slate-300">
-              Connected to backend API on port 8000.
+              Connected to backend API.
             </p>
           </div>
         </div>
@@ -579,7 +595,7 @@ export default function App() {
                           </ul>
                         </div>
 
-                        {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} token={token} /></div>}
+                        {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} token={token} onApiError={handleProtectedActionError} /></div>}
 
                         <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 print:hidden">
                           <h3 className="mb-4 text-sm font-semibold text-slate-900">Staff Review & Sign-off</h3>
@@ -722,7 +738,6 @@ export default function App() {
         </main>
       </div>
 
-      {/* --- Authentication Login Dialog --- */}
       <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>

@@ -2,6 +2,32 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ??
   "http://localhost:8000/api/v1"
 
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
+/** Reads a readable message from a failed response, including detail objects like { message }. */
+export async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json()
+    const detail = body?.detail
+    if (detail && typeof detail === "object" && !Array.isArray(detail) && typeof detail.message === "string") {
+      return detail.message
+    }
+    if (typeof detail === "string") return detail
+    if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg
+    if (typeof body?.error?.message === "string") return body.error.message
+    return fallback
+  } catch {
+    return fallback
+  }
+}
+
 export interface Factor {
   key: string
   label: string
@@ -84,17 +110,7 @@ async function requireSuccessfulResponse(
   fallbackMessage: string,
 ) {
   if (response.ok) return
-
-  let message = fallbackMessage
-
-  try {
-    const body = await response.json()
-    message = body?.error?.message ?? body?.detail ?? fallbackMessage
-  } catch {
-    // Use the fallback when the response is not JSON.
-  }
-
-  throw new Error(message)
+  throw new ApiError(await readErrorMessage(response, fallbackMessage), response.status)
 }
 
 function mapAgendaItem(item: BackendAgendaItem): AgendaItem {
@@ -178,7 +194,6 @@ export async function fetchAgendas(): Promise<AgendaItem[]> {
   )
 }
 
-// Updated to include the token parameter and Authorization header
 export async function uploadAgendaPdf(
   file: File,
   token: string | null
@@ -220,7 +235,6 @@ export async function fetchSources(): Promise<SourceRecord[]> {
   return sources.map(mapSource)
 }
 
-// Updated to include the token parameter and Authorization header
 export async function addSourceRecord(
   record: SourceRecordInput,
   token: string | null
