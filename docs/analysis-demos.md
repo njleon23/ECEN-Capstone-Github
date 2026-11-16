@@ -17,6 +17,8 @@ Until `LLM_API_KEY` is set on the server, briefings come from a rule-based offli
 | 5 | Pipeline | `python3 -m app.analysis` | The whole sample agenda through the pipeline, offline |
 | 6 | Sources from the backend | curl commands below | Add a source with the backend's endpoint, then approve it over HTTP; analysis follows the table |
 | 7 | Analysis endpoints | `python3 -m demos.demo_05_end_to_end` (server running; writes to the development database) | Agenda upload to heat list, briefing, and follow-up over HTTP |
+| 8 | Parsing validation | `python3 -m validation.validate_parsing` | Parser precision and recall against hand-written item lists; how many of the 10 required agendas are saved |
+| 9 | Evidence collection | `python3 -m validation.collect_evidence` (server running; writes to the development database) | Timed run of the whole workflow, including missing evidence, a refused vote request and a reviewer adjustment; writes a dated report to `validation/evidence/` |
 
 ## Source endpoints with curl (server running on port 8000)
 
@@ -66,6 +68,24 @@ How to display results:
 * Errors use `{"error": {"code", "message", "request_id", "details", "retry_guidance"}}`.
 * To label a briefing stale, compare `job.fingerprint` with a newer analysis; not yet exposed
   as an endpoint.
+
+## Reviewing and adjusting (frontend contract)
+
+* Attach a source to the open item with `POST /api/v1/agenda-items/{item_id}/sources/{source_id}`
+  (`DELETE` detaches, `GET /api/v1/agenda-items/{item_id}/sources` lists them). Analysis uses only
+  sources that are both approved and attached. An item with none gets `INSUFFICIENT_EVIDENCE`.
+* `GET /api/v1/items/{item_id}/analysis` returns the latest saved job (same shape as
+  `GET /api/v1/jobs/{job_id}`) or `404` when the item was never analyzed. Use it to show results
+  again after a refresh. If that job has no briefing because the model failed, call
+  `GET /api/v1/items/{item_id}/briefing` for the last good briefing and show it with the job's error message.
+* `POST /api/v1/items/{item_id}/priority/adjustments` with
+  `{"factor_key", "new_raw_value" (0 to 1), "reason", "reviewer"}` changes one factor on the latest analysis.
+  The reason is required (`400` or `422` without it). The response has the old and new score; the job's
+  `priority` now holds the new score, category, and `manual_adjustment`. `GET` on the same path lists the
+  history. A new analysis starts again without the adjustment, and the history is kept.
+  There is no sign-in, so `reviewer` is recorded but not verified.
+* `PATCH /api/v1/briefings/{briefing_id}/review` with `{"status": "draft | in_review | approved | rejected",
+  "reviewer", "comments"}` saves a review; `GET /api/v1/briefings/{briefing_id}/reviews` lists them, oldest first.
 
 ## Exact field names (use these, not placeholders)
 

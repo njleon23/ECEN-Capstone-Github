@@ -1,0 +1,35 @@
+{
+  "file": "exampleville_2026-11-12.txt",
+  "labeled_by": "Written by the AI assistant from reading the agenda text, not from parser output. Quan to confirm.",
+  "note": "Fictional second agenda with a different layout and numbering.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order"
+    },
+    {
+      "item_number": "2",
+      "title": "Consent Agenda"
+    },
+    {
+      "item_number": "2.1",
+      "title": "Approval of Minutes from the October 29, 2026 Meeting"
+    },
+    {
+      "item_number": "3",
+      "title": "Regular Agenda"
+    },
+    {
+      "item_number": "3.1",
+      "title": "Award of a $6.4 Million Contract for the Riverside Street Reconstruction Project"
+    },
+    {
+      "item_number": "3.2",
+      "title": "Public Hearing on Rezoning 8 Acres on Maple Avenue for Apartments"
+    },
+    {
+      "item_number": "4",
+      "title": "Adjourn"
+    }
+  ]
+}

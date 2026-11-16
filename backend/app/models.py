@@ -118,3 +118,25 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+class PriorityAdjustmentCreate(BaseModel):
+    factor_key: str = Field(min_length=1, max_length=64)
+    new_raw_value: float = Field(ge=0.0, le=1.0)
+    reason: str = Field(min_length=1, max_length=2000)
+    reviewer: str = Field(min_length=1, max_length=200)
+
+
+class PriorityAdjustmentResponse(BaseModel):
+    adjustment_id: str
+    item_id: str
+    job_id: str
+    factor_key: str
+    old_value: float
+    new_value: float
+    old_score: float
+    new_score: float
+    new_category: str
+    reason: str
+    reviewer: str
+    created_at: datetime

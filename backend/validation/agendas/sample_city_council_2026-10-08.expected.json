@@ -1,0 +1,67 @@
+{
+  "file": "../../../council-brief/examples/Sample_City_Council_Agenda_2026-10-08.txt",
+  "labeled_by": "Written by the AI assistant from reading the agenda text, not from parser output. Quan to confirm.",
+  "note": "Fictional agenda used for the demo.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order and Announcement of a Quorum"
+    },
+    {
+      "item_number": "2",
+      "title": "Hear Visitors and Receive Public Comment"
+    },
+    {
+      "item_number": "3",
+      "title": "Consent Agenda"
+    },
+    {
+      "item_number": "3.1",
+      "title": "Approval of Minutes from the September 24, 2026 City Council Meeting"
+    },
+    {
+      "item_number": "3.2",
+      "title": "Authorization of a $2.4 Million Contract for Replacement Fire and Rescue Equipment"
+    },
+    {
+      "item_number": "4",
+      "title": "Regular Agenda"
+    },
+    {
+      "item_number": "4.1",
+      "title": "Public Hearing and Consideration of Rezoning for a Proposed Mixed-Use Development Near University Drive"
+    },
+    {
+      "item_number": "4.2",
+      "title": "Public Hearing and Consideration of the FY2027 Budget Amendment and Water Utility Rate Adjustment"
+    },
+    {
+      "item_number": "4.3",
+      "title": "Discussion of a Regional Transit and Bicycle Mobility Plan"
+    },
+    {
+      "item_number": "4.4",
+      "title": "Award of a $12.8 Million Capital Construction Contract for the Eastside Drainage Improvement Project"
+    },
+    {
+      "item_number": "4.5",
+      "title": "Consideration of Updated Short-Term Rental Regulations"
+    },
+    {
+      "item_number": "4.6",
+      "title": "Discussion and Possible Action on a Downtown Parking Fee Pilot Program"
+    },
+    {
+      "item_number": "5",
+      "title": "Council and City Manager Reports"
+    },
+    {
+      "item_number": "6",
+      "title": "Executive Session"
+    },
+    {
+      "item_number": "7",
+      "title": "Adjourn"
+    }
+  ]
+}

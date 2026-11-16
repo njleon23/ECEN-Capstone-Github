@@ -174,11 +174,22 @@ POST /api/v1/items/{item_id}/analyses
 POST /api/v1/agendas/{agenda_id}/analyses
 GET  /api/v1/agendas/{agenda_id}/priorities
 GET  /api/v1/jobs/{job_id}
+GET  /api/v1/items/{item_id}/analysis
 GET  /api/v1/items/{item_id}/briefing
 POST /api/v1/items/{item_id}/questions
+POST /api/v1/items/{item_id}/priority/adjustments
+GET  /api/v1/items/{item_id}/priority/adjustments
+
+POST   /api/v1/agenda-items/{item_id}/sources/{source_id}
+GET    /api/v1/agenda-items/{item_id}/sources
+DELETE /api/v1/agenda-items/{item_id}/sources/{source_id}
+PATCH  /api/v1/briefings/{briefing_id}/review
+GET    /api/v1/briefings/{briefing_id}/reviews
 ```
 
 The analysis endpoints return the final `score` (0 to 10) and `category` (`Low`, `Moderate`, or `High`) for each item. The frontend should display them as given and not calculate its own thresholds. New sources start unapproved. A person approves a source with the approval endpoint, and only approved sources are used. Field names and example responses are in `docs/analysis-demos.md`.
+
+Analysis uses only approved sources that are attached to the selected item. A reviewer can change one priority factor with `POST /api/v1/items/{item_id}/priority/adjustments`; a reason and a reviewer name are required, and every adjustment is kept in the history. `GET /api/v1/items/{item_id}/analysis` returns the latest saved analysis so a page can show it again after a refresh. The backend has no sign-in yet, so reviewer names are recorded but not verified.
 
 The agenda-upload endpoint accepts searchable PDF, TXT, and Markdown files up to 25 MB.
 

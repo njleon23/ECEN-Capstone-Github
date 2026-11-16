@@ -55,6 +55,12 @@ def main() -> int:
                                             "text": s.text, "source_date": s.source_date}).json()
         src[s.source_id] = r["source_id"]
     print(f"  added {len(src)} sources, approved: {sum(1 for s in c.get('/api/v1/sources').json() if s['approved'])}")
+    # Analysis only uses sources attached to the selected item, so attach them to each scored item.
+    scored = [n for n in ids if n == "3.2" or n.startswith("4.")]
+    for n in scored:
+        for source_id in src.values():
+            c.post(f"/api/v1/agenda-items/{ids[n]}/sources/{source_id}").raise_for_status()
+    print(f"  attached the sources to {len(scored)} agenda items (attached but not approved are still ignored)")
 
     heading("3. Analyze item 4.4 with NO approved sources -> insufficient evidence")
     r = c.post(f"/api/v1/items/{ids['4.4']}/analyses")
@@ -71,7 +77,7 @@ def main() -> int:
 
     heading("5. Analyze the whole agenda; read the heat list")
     c.post(f"/api/v1/agendas/{agenda['agenda_id']}/analyses")
-    time.sleep(1.0)
+    time.sleep(2.0)
     for _ in range(40):
         rows = c.get(f"/api/v1/agendas/{agenda['agenda_id']}/priorities").json()["items"]
         if all(r["state"] in ("completed", "degraded", "failed", "not_analyzed") for r in rows) and \
