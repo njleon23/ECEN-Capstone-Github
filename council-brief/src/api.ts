@@ -178,14 +178,20 @@ export async function fetchAgendas(): Promise<AgendaItem[]> {
   )
 }
 
+// Updated to include the token parameter and Authorization header
 export async function uploadAgendaPdf(
   file: File,
+  token: string | null
 ): Promise<AgendaItem[]> {
   const formData = new FormData()
   formData.append("file", file)
 
+  const headers: HeadersInit = {}
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/agendas`, {
     method: "POST",
+    headers,
     body: formData,
   })
 
@@ -214,8 +220,10 @@ export async function fetchSources(): Promise<SourceRecord[]> {
   return sources.map(mapSource)
 }
 
+// Updated to include the token parameter and Authorization header
 export async function addSourceRecord(
   record: SourceRecordInput,
+  token: string | null
 ): Promise<SourceRecord> {
   const requestBody = {
     title: record.title,
@@ -227,11 +235,14 @@ export async function addSourceRecord(
     approved: false,
   }
 
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/sources`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(requestBody),
   })
 

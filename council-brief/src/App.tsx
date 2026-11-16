@@ -19,6 +19,9 @@ import {
   Link2,
   ListChecks,
   Loader2,
+  Lock,
+  LogIn,
+  LogOut,
   Plus,
   Printer,
   Search,
@@ -54,13 +57,11 @@ import { FollowUpBox } from "./FollowUpBox"
 
 type View = "meeting" | "sources" | "evaluation"
 
-// REMOVED: scoreFor and priorityFor local calculations per Quan's API update
-
 function priorityStyle(priority: string | null) {
   if (priority === "High") return "border-rose-200 bg-rose-50 text-rose-700"
   if (priority === "Moderate") return "border-amber-200 bg-amber-50 text-amber-700"
   if (priority === "Low") return "border-emerald-200 bg-emerald-50 text-emerald-700"
-  return "border-slate-200 bg-slate-50 text-slate-600" // Fallback for "Not scored"
+  return "border-slate-200 bg-slate-50 text-slate-600"
 }
 
 function statusStyle(status: AgendaItem["reviewStatus"]) {
@@ -108,6 +109,15 @@ export default function App() {
   const [view, setView] = useState<View>("meeting")
   const [briefTab, setBriefTab] = useState("briefing")
   const [query, setQuery] = useState("")
+  
+  // Authentication State
+  const [token, setToken] = useState<string | null>(null)
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [loginUser, setLoginUser] = useState("")
+  const [loginPass, setLoginPass] = useState("")
+  const [loginLoading, setLoginLoading] = useState(false)
+
+  // Upload & processing state
   const [uploadOpen, setUploadOpen] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
@@ -122,6 +132,7 @@ export default function App() {
       setIsLoading(true)
       setError(null)
       try {
+        // Fetching lists remains public per backend rules
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
           setItems(agendaData.map(withAnalysisDefaults))
@@ -141,52 +152,60 @@ export default function App() {
     loadBackendData()
   }, [])
 
-  // === TODO: DEMO ONLY - DELETE THIS FUNCTION WHEN BACKEND IS CONNECTED ===
-  const loadMockData = () => {
-    const mockItem = {
-      id: "mock-1",
-      number: "8.1",
-      title: "Approve vendor contract for traffic analysis",
-      department: "Public Works",
-      itemType: "Regular Agenda",
-      reviewStatus: "Needs review",
-      summary: "Example summary based on Quan's planned backend schema. The project was competitively bid.",
+  // Authentication Handlers
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoginLoading(true)
+    try {
+      // FastAPI OAuth2PasswordRequestForm expects form-urlencoded
+      const formData = new URLSearchParams()
+      formData.append("username", loginUser)
+      formData.append("password", loginPass)
+
+      const res = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData
+      })
       
-      // UPDATED SCHEMA FROM QUAN: Backend provides score and category directly
-      score: 4.5,
-      category: "Moderate", 
+      if (!res.ok) throw new Error("Invalid credentials")
       
-      // UPDATED SCHEMA FROM QUAN: Objects with text, support_level, and citations
-      key_facts: [
-        { text: "Project cost: $1.2M", support_level: "High", citations: ["Open Budget FY26, pg. 42"] },
-        { text: "Traffic impact expected on HWY 6", support_level: "High", citations: ["TxDOT Traffic Management Plan"] }
-      ],
-      anticipated_questions: [
-        { text: "Why was this vendor selected?", support_level: "Moderate", citations: [] },
-        { text: "How long will lane closures last?", support_level: "Moderate", citations: [] }
-      ],
-      talking_points: [
-        { text: "The project was competitively bid.", support_level: "High", citations: ["Approved Vendor Contract #892-B"] },
-        { text: "Funds are allocated in the FY26 budget.", support_level: "High", citations: ["Open Budget FY26"] }
-      ],
-      missingInformation: ["Exact timeline for lane closures"],
-      
-      // UPDATED SCHEMA FROM QUAN: priority.factors with label, explanation, points
-      priority: {
-        factors: [
-          { key: "f1", label: "Financial Impact", explanation: "Cost exceeding $1M", points: 2 },
-          { key: "f2", label: "Public Interest", explanation: "High traffic area", points: 2.5 }
-        ]
-      },
-      sourceIds: []
+      const data = await res.json()
+      setToken(data.access_token)
+      setLoginOpen(false)
+      setLoginUser("")
+      setLoginPass("")
+      toast.success("Successfully logged in.")
+    } catch (err) {
+      toast.error("Login failed. Please check your credentials.")
+    } finally {
+      setLoginLoading(false)
     }
-    
-    setItems([mockItem as any])
-    setSelectedId("mock-1")
-    setError(null) 
-    toast.success("Loaded updated demo mock data.")
   }
-  // === END DEMO ONLY ===
+
+  const handleLogout = async () => {
+    if (token) {
+      try {
+        await fetch("/api/v1/auth/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      } catch (err) {
+        console.error("Logout request failed", err)
+      }
+    }
+    setToken(null)
+    toast.success("Logged out successfully.")
+  }
+
+  const checkAuth = () => {
+    if (!token) {
+      setLoginOpen(true)
+      toast.error("Please sign in to perform this action.")
+      return false
+    }
+    return true
+  }
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
@@ -205,25 +224,30 @@ export default function App() {
     )
   }
 
-  // Analyzes only the item that is open. Each click sends one request to the analysis API.
   const runAnalysisForSelected = async () => {
+    if (!checkAuth()) return;
     if (!selected || analyzing) return
     const itemId = selected.id
     setAnalyzing(true)
     try {
-      const result = await analyzeItem(itemId)
+      // Pass token down to the API function
+      const result = await analyzeItem(itemId, token)
       setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...result } : item)))
       if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
+    } catch (error) {
+       toast.error("Failed to run analysis. Check permissions.")
     } finally {
       setAnalyzing(false)
     }
   }
 
   const toggleApproval = async (source: SourceRecord) => {
+    if (!checkAuth()) return;
     const next = !source.approved
     try {
-      await setSourceApproval(source.id, next)
+      // Pass token down to the API function
+      await setSourceApproval(source.id, next, token)
       setSources((current) => current.map((s) => (s.id === source.id ? { ...s, approved: next } : s)))
       toast.success(next ? "Source approved. Run the analysis again to use it." : "Source approval withdrawn.")
     } catch (err) {
@@ -232,13 +256,15 @@ export default function App() {
   }
 
   const processAgenda = async () => {
+    if (!checkAuth()) return;
     if (!agendaFile) {
       toast.error("Choose an agenda PDF or text file first.")
       return
     }
     setProcessing(true)
     try {
-      await uploadAgendaPdf(agendaFile)
+      // Pass token down to the API function
+      await uploadAgendaPdf(agendaFile, token)
       const updatedAgendas = await fetchAgendas()
       setItems(updatedAgendas.map(withAnalysisDefaults))
       if (updatedAgendas.length > 0) {
@@ -250,13 +276,14 @@ export default function App() {
       toast.success("Agenda packet successfully uploaded and processed by FastAPI.")
     } catch (error) {
       console.error(error)
-      toast.error("The file could not be processed by the backend server.")
+      toast.error("The file could not be processed. Please check permissions.")
     } finally {
       setProcessing(false)
     }
   }
 
   const addSource = async () => {
+    if (!checkAuth()) return;
     if (!sourceFile && !sourceTitle.trim()) {
       toast.error("Add a title or choose a source document.")
       return
@@ -273,7 +300,8 @@ export default function App() {
         fileName: sourceFile?.name,
       }
 
-      const savedSource = await addSourceRecord(newSource)
+      // Pass token down to the API function
+      const savedSource = await addSourceRecord(newSource, token)
       setSources((current) => [savedSource, ...current])
       if (selected) {
         updateSelected({ sourceIds: [...selected.sourceIds, savedSource.id] })
@@ -371,16 +399,23 @@ export default function App() {
               <p className="text-sm text-slate-500">August 27, 2026 · FastAPI Live Integration</p>
             </div>
             <div className="flex shrink-0 items-center gap-2 print:hidden">
-              <Badge variant="outline" className="hidden border-blue-200 bg-blue-50 text-blue-700 sm:inline-flex">
-                FastAPI Active
-              </Badge>
-              <Button variant="outline" onClick={() => setSourceOpen(true)} className="hidden sm:inline-flex">
+              {token ? (
+                <Button variant="ghost" onClick={handleLogout} className="hidden sm:inline-flex text-slate-600">
+                  <LogOut className="mr-2 size-4" /> Sign out
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => setLoginOpen(true)} className="hidden sm:inline-flex text-slate-600">
+                  <LogIn className="mr-2 size-4" /> Sign in
+                </Button>
+              )}
+              
+              <Button variant="outline" onClick={() => { if(checkAuth()) setSourceOpen(true); }} className="hidden sm:inline-flex">
                 <Plus /> Add source
               </Button>
               <Button variant="outline" onClick={runAnalysisForSelected} disabled={analyzing || !selected}>
                 {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />} {analyzing ? "Analyzing…" : "Analyze this item"}
               </Button>
-              <Button onClick={() => setUploadOpen(true)} className="bg-blue-600 hover:bg-blue-700">
+              <Button onClick={() => { if(checkAuth()) setUploadOpen(true); }} className="bg-blue-600 hover:bg-blue-700">
                 <Upload /> <span className="hidden sm:inline">Upload agenda</span><span className="sm:hidden">Upload</span>
               </Button>
             </div>
@@ -431,14 +466,6 @@ export default function App() {
                         <AlertTriangle className="mb-2 size-6" />
                         <p className="font-semibold">Connection Failed</p>
                         <p className="mt-1 text-sm">{error}</p>
-                        
-                        <Button 
-                          onClick={loadMockData} 
-                          variant="outline" 
-                          className="mt-4 border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
-                        >
-                          <Sparkles className="mr-2 size-4" /> Load Demo Data
-                        </Button>
                       </div>
                     )}
 
@@ -446,14 +473,6 @@ export default function App() {
                       <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500">
                         <p className="font-medium text-slate-700">No agendas found.</p>
                         <p className="mt-1 text-sm">Please upload a sample agenda to begin your review.</p>
-
-                        <Button 
-                          onClick={loadMockData} 
-                          variant="outline" 
-                          className="mt-4 border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        >
-                          <Sparkles className="mr-2 size-4 text-blue-600" /> Load Demo Data
-                        </Button>
                       </div>
                     )}
 
@@ -537,7 +556,6 @@ export default function App() {
                         </div>
 
                         <div className="grid gap-6 lg:grid-cols-2">
-                          {/* UPDATED: Pass the full objects instead of mapped strings to allow BriefingList to render badges */}
                           <BriefingList title="Key facts" icon={CheckCircle2} items={selected.key_facts} />
                           
                           <EditableList
@@ -545,7 +563,6 @@ export default function App() {
                             icon={FileSearch}
                             items={selected.anticipated_questions?.map((q: any) => q.text)}
                             onChange={(updatedTextArray) => {
-                              // Re-map back to the object structure expected by the backend
                               const updatedQuestions = updatedTextArray.map((text) => ({ text, support_level: "Moderate", citations: [] }))
                               updateSelected({ anticipated_questions: updatedQuestions })
                             }}
@@ -562,7 +579,7 @@ export default function App() {
                           </ul>
                         </div>
 
-                        {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} /></div>}
+                        {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} token={token} /></div>}
 
                         <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 print:hidden">
                           <h3 className="mb-4 text-sm font-semibold text-slate-900">Staff Review & Sign-off</h3>
@@ -588,6 +605,7 @@ export default function App() {
                                 variant="outline" 
                                 className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
                                 onClick={() => {
+                                  if (!checkAuth()) return;
                                   updateSelected({ reviewStatus: "Needs review" })
                                   toast.error("Flagged for further review.")
                                 }}
@@ -597,6 +615,7 @@ export default function App() {
                               <Button
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
                                 onClick={() => {
+                                  if (!checkAuth()) return;
                                   updateSelected({ reviewStatus: "Approved" })
                                   toast.success("Briefing marked as approved!")
                                 }}
@@ -618,7 +637,6 @@ export default function App() {
                             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
                               <span>{categoryLabel(selected)}</span><span>{scoreLabel(selected)}</span>
                             </div>
-                            {/* Render progress bar if score exists, otherwise zero */}
                             <Progress value={(selected.score || 0) * 10} className="bg-slate-200 [&_[data-slot=progress-indicator]]:bg-blue-600" />
                           </div>
                         </div>
@@ -639,7 +657,7 @@ export default function App() {
                                   max={factor.maxPoints ?? 2.5}
                                   step={0.5}
                                   value={[factor.points]}
-                                  disabled // Sliders disabled for now per discussion of backend scoring
+                                  disabled
                                   aria-label={`${factor.label} score`}
                                   className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 opacity-50"
                                 />
@@ -656,7 +674,7 @@ export default function App() {
                             <h3 className="font-semibold">Supporting evidence</h3>
                             <p className="mt-1 text-sm text-slate-500">Important claims trace back to approved backend sources.</p>
                           </div>
-                          <Button variant="outline" onClick={() => setSourceOpen(true)}><Plus /> Add source</Button>
+                          <Button variant="outline" onClick={() => { if (checkAuth()) setSourceOpen(true) }}><Plus /> Add source</Button>
                         </div>
                         {selectedSources.length > 0 ? (
                           <div className="space-y-3">
@@ -685,7 +703,7 @@ export default function App() {
                   <h2 className="text-2xl font-semibold tracking-tight">Backend sources</h2>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Official public records retrieved from FastAPI.</p>
                 </div>
-                <Button onClick={() => setSourceOpen(true)} className="bg-blue-600 hover:bg-blue-700"><Plus /> Add source</Button>
+                <Button onClick={() => { if(checkAuth()) setSourceOpen(true); }} className="bg-blue-600 hover:bg-blue-700"><Plus /> Add source</Button>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 {sources.map((source) => <SourceCard key={source.id} source={source} expanded onToggleApproval={toggleApproval} />)}
@@ -704,7 +722,52 @@ export default function App() {
         </main>
       </div>
 
-      {/* Dialogs for Upload and Source additions remain exactly the same */}
+      {/* --- Authentication Login Dialog --- */}
+      <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="size-5 text-blue-600" /> Staff Sign In
+            </DialogTitle>
+            <DialogDescription>
+              Authentication is required to perform administrative actions.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <form onSubmit={handleLogin} className="space-y-5 py-4">
+            <label className="block space-y-2 text-sm font-medium">
+              Username
+              <Input 
+                value={loginUser} 
+                onChange={(e) => setLoginUser(e.target.value)} 
+                placeholder="Enter username" 
+                required 
+              />
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
+              Password
+              <Input 
+                type="password" 
+                value={loginPass} 
+                onChange={(e) => setLoginPass(e.target.value)} 
+                placeholder="••••••••" 
+                required 
+              />
+            </label>
+            
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" onClick={() => setLoginOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={loginLoading} className="bg-blue-600 hover:bg-blue-700 text-white">
+                {loginLoading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <LogIn className="mr-2 size-4" />}
+                Sign In
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent>
           <DialogHeader>
@@ -723,8 +786,8 @@ export default function App() {
           {agendaFile && <div className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800"><FileText className="size-4" /> {agendaFile.name}</div>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancel</Button>
-            <Button onClick={processAgenda} disabled={processing} className="bg-blue-600 hover:bg-blue-700">
-              {processing ? <Loader2 className="animate-spin" /> : <FileSearch />}
+            <Button onClick={processAgenda} disabled={processing} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {processing ? <Loader2 className="animate-spin" /> : <FileSearch className="mr-2 size-4" />}
               Upload to FastAPI
             </Button>
           </DialogFooter>
@@ -753,8 +816,8 @@ export default function App() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSourceOpen(false)}>Cancel</Button>
-            <Button onClick={addSource} disabled={processing} className="bg-blue-600 hover:bg-blue-700">
-              {processing ? <Loader2 className="animate-spin" /> : <Link2 />} Attach source
+            <Button onClick={addSource} disabled={processing} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {processing ? <Loader2 className="animate-spin" /> : <Link2 className="mr-2 size-4" />} Attach source
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -763,7 +826,6 @@ export default function App() {
   )
 }
 
-// UPDATED: BriefingList now accepts `any[]` instead of strictly `string[]` so it can parse your full AI objects
 function BriefingList({ title, icon: Icon, items, empty = "No information available." }: { title: string; icon: React.ComponentType<{ className?: string }>; items: any[]; empty?: string }) {
   return (
     <div>
@@ -771,7 +833,6 @@ function BriefingList({ title, icon: Icon, items, empty = "No information availa
       {items && items.length > 0 ? (
         <ul className="space-y-4 text-sm leading-6 text-slate-700">
           {items.map((item, idx) => {
-            // Check if the item is just a string (fallback) or the full object
             const text = typeof item === 'string' ? item : item.text;
             const supportLevel = typeof item === 'string' ? null : item.support_level;
             const citations = typeof item === 'string' ? null : item.citations;
@@ -783,7 +844,6 @@ function BriefingList({ title, icon: Icon, items, empty = "No information availa
                   <div className="flex flex-wrap items-center">
                     <span className="mr-2">{text}</span>
                     
-                    {/* 1. AI Confidence Badge (Colors match your existing UI palette!) */}
                     {supportLevel && (
                       <span className={`mr-2 mt-0.5 inline-flex items-center rounded-md px-2 py-0.5 text-[0.65rem] font-medium ring-1 ring-inset ${
                         supportLevel.toLowerCase() === 'high' ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 
@@ -794,7 +854,6 @@ function BriefingList({ title, icon: Icon, items, empty = "No information availa
                       </span>
                     )}
 
-                    {/* 2. Citation Count Badge */}
                     {citations && citations.length > 0 && (
                       <span className="mt-0.5 inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[0.65rem] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
                         {citations.length} Source{citations.length !== 1 ? 's' : ''}
@@ -803,7 +862,6 @@ function BriefingList({ title, icon: Icon, items, empty = "No information availa
                   </div>
                 </div>
 
-                {/* 3. Government Source Dropdown */}
                 {citations && citations.length > 0 && (
                   <ul className="ml-5 mt-1 space-y-1 border-l-2 border-slate-200 pl-3">
                     {citations.map((cite: string, i: number) => (
@@ -855,8 +913,8 @@ function SourceCard({ source, expanded = false, onToggleApproval }: { source: So
           <h4 className="font-semibold leading-5">{source.title}</h4>
         </div>
         {source.url && (
-          <Button size="icon-sm" variant="ghost" asChild>
-            <a href={source.url} target="_blank" rel="noreferrer"><ExternalLink /></a>
+          <Button size="sm" variant="ghost" asChild>
+            <a href={source.url} target="_blank" rel="noreferrer"><ExternalLink className="size-4" /></a>
           </Button>
         )}
       </div>

@@ -277,9 +277,15 @@ function failedFields(message: string): AnalysisFields {
   return { ...(withAnalysisDefaults({}) as AnalysisFields), analysisState: "failed", missingInformation: [message] }
 }
 
-async function analyzeOne(itemId: string): Promise<AnalysisFields> {
+async function analyzeOne(itemId: string, token: string | null): Promise<AnalysisFields> {
   try {
-    const started = await fetch(`${API_BASE_URL}/items/${itemId}/analyses`, { method: "POST" })
+    const headers: HeadersInit = {}
+    if (token) headers["Authorization"] = `Bearer ${token}`
+
+    const started = await fetch(`${API_BASE_URL}/items/${itemId}/analyses`, { 
+      method: "POST", 
+      headers 
+    })
     if (!started.ok) return failedFields(await errorMessage(started, "The analysis could not be started."))
     const { job_id } = (await started.json()) as { job_id: string }
     return jobToFields(await waitForJob(job_id))
@@ -304,20 +310,26 @@ export function writerLabel(modelId?: string): string {
 }
 
 /** Approves or withdraws a source. Only approved sources are ever used by the analysis. */
-export async function setSourceApproval(sourceId: string, approved: boolean): Promise<void> {
+export async function setSourceApproval(sourceId: string, approved: boolean, token: string | null): Promise<void> {
+  const headers: HeadersInit = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/sources/${sourceId}/approval`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ approved }),
   })
   if (!response.ok) throw new Error(await errorMessage(response, "The approval could not be saved."))
 }
 
 /** Asks a follow-up question about one item. Refusals and "insufficient evidence" are normal results. */
-export async function askFollowUp(itemId: string, question: string): Promise<FollowUpResult> {
+export async function askFollowUp(itemId: string, question: string, token: string | null): Promise<FollowUpResult> {
+  const headers: HeadersInit = { "Content-Type": "application/json" }
+  if (token) headers["Authorization"] = `Bearer ${token}`
+
   const response = await fetch(`${API_BASE_URL}/items/${itemId}/questions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ question }),
   })
   if (response.ok) {

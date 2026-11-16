@@ -22,7 +22,7 @@ const STATUS_STYLE: Record<FollowUpResult["status"], string> = {
 }
 
 /** Follow-up questions for one agenda item, answered only from approved sources. */
-export function FollowUpBox({ itemId }: { itemId: string }) {
+export function FollowUpBox({ itemId, token }: { itemId: string; token: string | null }) {
   const [question, setQuestion] = useState("")
   const [asking, setAsking] = useState(false)
   const [result, setResult] = useState<FollowUpResult | null>(null)
@@ -32,7 +32,7 @@ export function FollowUpBox({ itemId }: { itemId: string }) {
     if (!trimmed || asking) return
     setAsking(true)
     try {
-      setResult(await askFollowUp(itemId, trimmed))
+      setResult(await askFollowUp(itemId, trimmed, token))
     } catch {
       setResult({ status: "error", text: "The backend could not be reached.", citations: [] })
     } finally {
