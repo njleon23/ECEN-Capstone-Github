@@ -48,10 +48,24 @@ import { Toaster } from "@/components/ui/sonner"
 
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
-import { analyzeItem, categoryLabel, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
+import { analyzeItem, categoryLabel, writerLabel, scoreLabel, restoreSavedItem, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
 
 type View = "meeting" | "sources" | "evaluation"
+
+/**
+ * Adds the saved analysis, briefing and review status to each item, so results are still there after a refresh.
+ * Items with nothing saved keep their defaults. A failed lookup never blocks the page.
+ */
+async function hydrate(list: AgendaItem[]): Promise<any[]> {
+  const restored = await Promise.all(list.map((item) => restoreSavedItem(item.id)))
+  return list.map((item, index) => {
+    const base = withAnalysisDefaults(item)
+    const saved = restored[index]
+    if (!saved) return base
+    return { ...base, ...saved.fields }
+  })
+}
 
 function priorityStyle(priority: string | null) {
   if (priority === "High") return "border-rose-200 bg-rose-50 text-rose-700"
@@ -127,7 +141,7 @@ export default function App() {
       try {
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
-          setItems(agendaData.map(withAnalysisDefaults))
+          setItems(await hydrate(agendaData))
           setSelectedId(agendaData[0].id)
         }
         if (sourceData) {
@@ -284,7 +298,7 @@ export default function App() {
     try {
       await uploadAgendaPdf(agendaFile, token)
       const updatedAgendas = await fetchAgendas()
-      setItems(updatedAgendas.map(withAnalysisDefaults))
+      setItems(await hydrate(updatedAgendas))
       if (updatedAgendas.length > 0) {
         setSelectedId(updatedAgendas[0].id)
       }

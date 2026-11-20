@@ -424,3 +424,21 @@ export async function askFollowUp(itemId: string, question: string, token: strin
   if (response.status === 401 || response.status === 429) throw new ApiError(message, response.status)
   return { status: code === "INSUFFICIENT_EVIDENCE" ? "insufficient_evidence" : "error", text: message, citations: [] }
 }
+
+// ---- saved results: what survives a page refresh ---------------------------------------------------------
+
+/** Everything the page needs to show an item again after a refresh. `null` means nothing was saved. */
+export interface RestoredItem {
+  fields: AnalysisFields
+}
+
+/** Loads the latest saved analysis and its briefing. Never throws. */
+export async function restoreSavedItem(itemId: string): Promise<RestoredItem | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/items/${itemId}/analysis`)
+    if (!response.ok) return null
+    return { fields: await withLastGoodBriefing((await response.json()) as ApiJob, itemId) }
+  } catch {
+    return null
+  }
+}
