@@ -227,7 +227,7 @@ export function withAnalysisDefaults<T extends object>(item: T): T & AnalysisFie
 
 // ---- mapping a finished job ----------------------------------------------------------------
 
-export function jobToFields(job: ApiJob): AnalysisFields {
+export function jobToFields(job: ApiJob, keptPreviousBriefing = false): AnalysisFields {
   const priority = job.priority
   const briefing = job.briefing
   const byId = new Map<string, UiCitation>((briefing?.citations ?? []).map((c) => [c.citation_id, toUiCitation(c)]))
@@ -239,6 +239,9 @@ export function jobToFields(job: ApiJob): AnalysisFields {
     notes.push("No approved source matched this item, so no score was generated. Approve a related source in the Source Library, then run the analysis again.")
   } else if (job.error) {
     notes.push(`The briefing could not be completed: ${job.error.message}${priority?.score != null ? " The score is still shown." : ""}`)
+  }
+  if (keptPreviousBriefing && job.error) {
+    notes.unshift(`The latest run could not write a new briefing (${job.error.message}) The last saved briefing is shown below.`)
   }
   if (briefing) {
     notes.push(...briefing.warnings)
@@ -315,6 +318,21 @@ function failedFields(message: string): AnalysisFields {
   return { ...(withAnalysisDefaults({}) as AnalysisFields), analysisState: "failed", missingInformation: [message] }
 }
 
+/**
+ * When a run fails because the model failed (not because evidence is missing), the backend keeps the last good
+ * briefing. This fetches it so the page can keep showing it next to the clear error message.
+ */
+async function withLastGoodBriefing(job: ApiJob, itemId: string): Promise<AnalysisFields> {
+  if (job.briefing || job.error?.code === "INSUFFICIENT_EVIDENCE" || !job.error) return jobToFields(job)
+  try {
+    const response = await fetch(`${API_BASE_URL}/items/${itemId}/briefing`)
+    if (response.ok) return jobToFields({ ...job, briefing: (await response.json()) as ApiBriefing }, true)
+  } catch {
+    // fall through: show the error without a briefing
+  }
+  return jobToFields(job)
+}
+
 async function analyzeOne(itemId: string, token: string | null): Promise<AnalysisFields> {
   try {
     const headers: HeadersInit = {}
@@ -330,7 +348,7 @@ async function analyzeOne(itemId: string, token: string | null): Promise<Analysi
       return failedFields(message)
     }
     const { job_id } = (await started.json()) as { job_id: string }
-    return jobToFields(await waitForJob(job_id))
+    return await withLastGoodBriefing(await waitForJob(job_id), itemId)
   } catch (error) {
     // Session and rate-limit problems go to the screen, which signs the user in again or shows the retry message.
     if (isAuthOrRateLimit(error)) throw error

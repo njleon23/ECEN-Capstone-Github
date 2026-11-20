@@ -253,6 +253,7 @@ export default function App() {
       const result = await analyzeItem(itemId, token)
       setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...result } : item)))
       if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
+      else if (result.analysisState === "degraded") toast.warning("The analysis finished with a problem. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
     } catch (error) {
        handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
