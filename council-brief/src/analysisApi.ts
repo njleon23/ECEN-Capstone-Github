@@ -41,6 +41,7 @@ interface ApiFactor {
   label: string
   explanation: string
   weight: number
+  raw_value: number
   contribution: number
 }
 
@@ -49,9 +50,11 @@ interface ApiPriority {
   category: Category | null
   evidence_level: EvidenceLevel
   factors: ApiFactor[]
+  manual_adjustment?: { factor_key: string; reason: string; reviewer_id: string; old_value: number; new_value: number } | null
 }
 
 interface ApiBriefing {
+  briefing_id: string
   status: string
   summary: string
   key_facts: ApiClaim[]
@@ -99,6 +102,33 @@ export interface UiFactor {
   explanation: string
   points: number
   maxPoints: number
+  /** 0 to 1, as the backend stores it. A reviewer adjustment sends this value. */
+  rawValue: number
+}
+
+export interface UiAdjustment {
+  factorKey: string
+  reason: string
+  reviewer: string
+}
+
+export interface AdjustmentRecord {
+  id: string
+  factorKey: string
+  oldScore: number
+  newScore: number
+  newCategory: string
+  reason: string
+  reviewer: string
+  at: string
+}
+
+export interface ReviewRecord {
+  id: string
+  status: "draft" | "in_review" | "approved" | "rejected"
+  reviewer: string
+  comments: string
+  at: string
 }
 
 export interface AnalysisFields {
@@ -114,8 +144,12 @@ export interface AnalysisFields {
   talking_points: UiClaim[]
   missingInformation: string[]
   summary?: string
-  sourceIds?: string[]
+  /** Sources the briefing actually used. The sources attached to the item are `sourceIds` on the item. */
+  usedSourceIds?: string[]
   modelId?: string
+  jobId?: string
+  briefingId?: string
+  adjustment?: UiAdjustment | null
 }
 
 export interface FollowUpResult {
@@ -230,6 +264,7 @@ export function jobToFields(job: ApiJob): AnalysisFields {
         explanation: f.explanation,
         points: round(f.contribution),
         maxPoints: round(f.weight * 10),
+        rawValue: f.raw_value,
       })),
     },
     key_facts: claims(briefing?.key_facts),
@@ -247,10 +282,15 @@ export function jobToFields(job: ApiJob): AnalysisFields {
     talking_points: claims(briefing?.talking_points),
     missingInformation: notes,
   }
+  fields.jobId = job.job_id
+  fields.adjustment = priority?.manual_adjustment
+    ? { factorKey: priority.manual_adjustment.factor_key, reason: priority.manual_adjustment.reason, reviewer: priority.manual_adjustment.reviewer_id }
+    : null
   if (briefing) {
     fields.summary = briefing.summary
-    fields.sourceIds = briefing.source_ids
+    fields.usedSourceIds = briefing.source_ids
     fields.modelId = briefing.model_id
+    fields.briefingId = briefing.briefing_id
   }
   return fields
 }
