@@ -236,7 +236,7 @@ export function jobToFields(job: ApiJob, keptPreviousBriefing = false): Analysis
 
   const notes: string[] = []
   if (job.error?.code === "INSUFFICIENT_EVIDENCE") {
-    notes.push("No approved source matched this item, so no score was generated. Approve a related source in the Source Library, then run the analysis again.")
+    notes.push("No approved source attached to this item matched it, so no score was generated. In the Evidence tab, attach a related source and make sure it is approved, then analyze the item again.")
   } else if (job.error) {
     notes.push(`The briefing could not be completed: ${job.error.message}${priority?.score != null ? " The score is still shown." : ""}`)
   }
@@ -425,6 +425,20 @@ export async function askFollowUp(itemId: string, question: string, token: strin
   return { status: code === "INSUFFICIENT_EVIDENCE" ? "insufficient_evidence" : "error", text: message, citations: [] }
 }
 
+// ---- shared request helpers --------------------------------------------------------------------------------------
+
+function authHeaders(token: string | null, json = false): HeadersInit {
+  const headers: Record<string, string> = {}
+  if (json) headers["Content-Type"] = "application/json"
+  if (token) headers["Authorization"] = `Bearer ${token}`
+  return headers
+}
+
+/** Throws an ApiError carrying the status, so the screen can sign the user in again on 401 or show the retry message on 429. */
+async function failWith(response: Response, fallback: string): Promise<never> {
+  throw new ApiError(await readErrorMessage(response, fallback), response.status)
+}
+
 // ---- saved results: what survives a page refresh ---------------------------------------------------------
 
 /** Everything the page needs to show an item again after a refresh. `null` means nothing was saved. */
@@ -441,4 +455,23 @@ export async function restoreSavedItem(itemId: string): Promise<RestoredItem | n
   } catch {
     return null
   }
+}
+
+// ---- sources attached to an item ---------------------------------------------------------------------------
+
+/** Ids of the sources attached to an item. Only approved, attached sources are used by the analysis. */
+export async function listAttachedSourceIds(itemId: string): Promise<string[]> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources`)
+  if (!response.ok) await failWith(response, "The attached sources could not be loaded.")
+  return ((await response.json()) as Array<{ source_id: string }>).map((s) => s.source_id)
+}
+
+export async function attachSource(itemId: string, sourceId: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources/${sourceId}`, { method: "POST", headers: authHeaders(token) })
+  if (!response.ok) await failWith(response, "The source could not be attached.")
+}
+
+export async function detachSource(itemId: string, sourceId: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources/${sourceId}`, { method: "DELETE", headers: authHeaders(token) })
+  if (!response.ok) await failWith(response, "The source could not be detached.")
 }

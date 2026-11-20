@@ -48,8 +48,12 @@ import { Toaster } from "@/components/ui/sonner"
 
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
-import { analyzeItem, categoryLabel, writerLabel, scoreLabel, restoreSavedItem, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
+import {
+  analyzeItem, attachSource, categoryLabel, detachSource, listAttachedSourceIds, restoreSavedItem,
+  scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
+} from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
+import { AttachPicker } from "./ReviewPanels"
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -243,6 +247,20 @@ export default function App() {
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
+  const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
+  const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
+
+  // When an item is opened, load the sources attached to it.
+  useEffect(() => {
+    if (!selectedId || selectedId.startsWith("mock")) return
+    let cancelled = false
+    ;(async () => {
+      const ids = await listAttachedSourceIds(selectedId).catch(() => null)
+      if (cancelled) return
+      if (ids) setItems((current) => current.map((item) => (item.id === selectedId ? { ...item, sourceIds: ids } : item)))
+    })()
+    return () => { cancelled = true }
+  }, [selectedId])
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -285,6 +303,28 @@ export default function App() {
       toast.success(next ? "Source approved. Run the analysis again to use it." : "Source approval withdrawn.")
     } catch (error) {
       handleProtectedActionError(error, "The approval could not be saved.")
+    }
+  }
+
+  const attachToSelected = async (source: SourceRecord) => {
+    if (!selected || !checkAuth()) return
+    try {
+      await attachSource(selected.id, source.id, token)
+      updateSelected({ sourceIds: [...(selected.sourceIds ?? []), source.id] })
+      toast.success(source.approved ? "Source attached. Run the analysis again to use it." : "Source attached. It is not approved yet, so it will not be used until it is.")
+    } catch (err) {
+      handleProtectedActionError(err, "The source could not be attached.")
+    }
+  }
+
+  const detachFromSelected = async (source: SourceRecord) => {
+    if (!selected || !checkAuth()) return
+    try {
+      await detachSource(selected.id, source.id, token)
+      updateSelected({ sourceIds: (selected.sourceIds ?? []).filter((id: string) => id !== source.id) })
+      toast.success("Source detached from this item.")
+    } catch (err) {
+      handleProtectedActionError(err, "The source could not be detached.")
     }
   }
 
@@ -335,7 +375,16 @@ export default function App() {
       const savedSource = await addSourceRecord(newSource, token)
       setSources((current) => [savedSource, ...current])
       if (selected) {
-        updateSelected({ sourceIds: [...selected.sourceIds, savedSource.id] })
+        if (isReal) {
+          try {
+            await attachSource(selected.id, savedSource.id, token)
+            updateSelected({ sourceIds: [...(selected.sourceIds ?? []), savedSource.id] })
+          } catch {
+            toast.error("The source was saved but could not be attached to this item. Attach it from the Evidence tab.")
+          }
+        } else {
+          updateSelected({ sourceIds: [...(selected.sourceIds ?? []), savedSource.id] })
+        }
       }
       setSourceOpen(false)
       setSourceTitle("")
@@ -709,11 +758,12 @@ export default function App() {
                         </div>
                         {selectedSources.length > 0 ? (
                           <div className="space-y-3">
-                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} onToggleApproval={toggleApproval} />)}
+                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} onToggleApproval={toggleApproval} onDetach={isReal ? detachFromSelected : undefined} />)}
                           </div>
                         ) : (
-                          <EmptySection>No supporting sources attached yet.</EmptySection>
+                          <EmptySection>No sources are attached to this item yet. Only approved sources attached to an item are used in its analysis.</EmptySection>
                         )}
+                        {isReal && <AttachPicker available={unattachedSources} onAttach={attachToSelected} />}
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -926,7 +976,7 @@ function EditableList({ title, icon: Icon, items, onChange }: { title: string; i
   )
 }
 
-function SourceCard({ source, expanded = false, onToggleApproval }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void }) {
+function SourceCard({ source, expanded = false, onToggleApproval, onDetach }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void; onDetach?: (source: SourceRecord) => void }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-4">
@@ -949,11 +999,18 @@ function SourceCard({ source, expanded = false, onToggleApproval }: { source: So
         )}
       </div>
       <p className={`mt-3 text-sm leading-6 text-slate-600 ${expanded ? "" : "line-clamp-3"}`}>{source.excerpt}</p>
-      {onToggleApproval && typeof source.approved === "boolean" && (
-        <Button size="sm" variant="outline" className="mt-3" onClick={() => onToggleApproval(source)}>
-          {source.approved ? "Withdraw approval" : "Approve source"}
-        </Button>
-      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {onToggleApproval && typeof source.approved === "boolean" && (
+          <Button size="sm" variant="outline" onClick={() => onToggleApproval(source)}>
+            {source.approved ? "Withdraw approval" : "Approve source"}
+          </Button>
+        )}
+        {onDetach && (
+          <Button size="sm" variant="ghost" className="text-slate-600" onClick={() => onDetach(source)}>
+            Detach from this item
+          </Button>
+        )}
+      </div>
       {source.fileName && <p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><FileText className="size-3.5" /> {source.fileName}</p>}
     </div>
   )
