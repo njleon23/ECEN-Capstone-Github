@@ -1,13 +1,15 @@
-// Small panels for the staff workflow: attaching sources and the review history.
-// All saved results come from the backend.
+// Small panels for the staff workflow: attaching sources, review history,
+// and the reviewer factor adjustment (FSR ANA-007). All saved results come from the backend.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Slider } from "@/components/ui/slider"
 
-import type { ReviewRecord } from "./analysisApi"
+import type { AdjustmentRecord, ReviewRecord, UiFactor } from "./analysisApi"
 import type { SourceRecord } from "./api"
 
 const when = (iso: string) => {
@@ -85,6 +87,103 @@ export function AttachPicker({ available, onAttach }: { available: SourceRecord[
       <Button variant="outline" disabled={!choice || busy} onClick={attach}>
         {busy && <Loader2 className="mr-2 size-4 animate-spin" />}Attach
       </Button>
+    </div>
+  )
+}
+
+/**
+ * One priority factor with a slider. Moving the slider changes nothing until the reviewer gives a reason and saves.
+ * The backend recomputes the score and category and keeps the reviewer name, reason and old value.
+ */
+export function FactorAdjuster({
+  factor,
+  canAdjust,
+  onSave,
+}: {
+  factor: UiFactor
+  canAdjust: boolean
+  onSave: (factorKey: string, newRawValue: number, reason: string) => Promise<void>
+}) {
+  const [value, setValue] = useState(factor.points)
+  const [reason, setReason] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setValue(factor.points)
+    setReason("")
+  }, [factor.points, factor.key])
+
+  const changed = Math.abs(value - factor.points) >= 0.05
+  const save = async () => {
+    setSaving(true)
+    try {
+      const raw = factor.maxPoints > 0 ? Math.min(1, Math.max(0, value / factor.maxPoints)) : 0
+      await onSave(factor.key, Math.round(raw * 1000) / 1000, reason)
+    } catch {
+      // the parent shows the error message
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-[1fr_auto] items-center gap-4">
+        <Slider
+          min={0}
+          max={factor.maxPoints ?? 2.5}
+          step={0.1}
+          value={[value]}
+          onValueChange={(next) => setValue(next[0])}
+          disabled={!canAdjust}
+          aria-label={`${factor.label} points`}
+          className={`[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 ${canAdjust ? "" : "opacity-50"}`}
+        />
+        <span className="text-xs text-slate-500">{value.toFixed(1)} of {factor.maxPoints ?? 2.5} max</span>
+      </div>
+      {changed && (
+        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+          <label htmlFor={`reason-${factor.key}`} className="mb-1.5 block text-xs font-semibold text-blue-900">
+            Reason for this change (required)
+          </label>
+          <Input
+            id={`reason-${factor.key}`}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="For example: a petition is not in the approved sources"
+            className="border-blue-100 bg-white text-sm"
+          />
+          <div className="mt-3 flex gap-2">
+            <Button size="sm" disabled={saving} onClick={save}>
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}Save adjustment
+            </Button>
+            <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setValue(factor.points); setReason("") }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+export function AdjustmentHistory({ adjustments, labels }: { adjustments: AdjustmentRecord[]; labels: Record<string, string> }) {
+  if (adjustments.length === 0) return null
+  return (
+    <div className="mt-6">
+      <h4 className="mb-2 text-sm font-semibold">Reviewer adjustments</h4>
+      <ul className="space-y-2" aria-label="Adjustment history">
+        {[...adjustments].reverse().map((a) => (
+          <li key={a.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{labels[a.factorKey] ?? a.factorKey}</span>
+              <span className="text-slate-500">score {a.oldScore} to {a.newScore} ({a.newCategory})</span>
+              <span className="text-xs text-slate-400">{a.reviewer}, {when(a.at)}</span>
+            </div>
+            <p className="mt-1.5 leading-5 text-slate-600">{a.reason}</p>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

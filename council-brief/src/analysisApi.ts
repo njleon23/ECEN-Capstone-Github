@@ -243,6 +243,10 @@ export function jobToFields(job: ApiJob, keptPreviousBriefing = false): Analysis
   if (keptPreviousBriefing && job.error) {
     notes.unshift(`The latest run could not write a new briefing (${job.error.message}) The last saved briefing is shown below.`)
   }
+  if (priority?.manual_adjustment) {
+    const a = priority.manual_adjustment
+    notes.push(`A reviewer (${a.reviewer_id}) adjusted this score: ${a.reason}`)
+  }
   if (briefing) {
     notes.push(...briefing.warnings)
     const weak = [...briefing.key_facts, ...briefing.concerns, ...briefing.talking_points].filter((c) => c.support !== "supported").length
@@ -512,4 +516,26 @@ export async function saveBriefingReview(
   })
   if (!response.ok) await failWith(response, "The review could not be saved.")
   return toReview(await response.json())
+}
+
+// ---- reviewer adjustment of a priority factor (FSR ANA-007) -----------------------------------------------------
+
+export async function listAdjustments(itemId: string): Promise<AdjustmentRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/items/${itemId}/priority/adjustments`)
+  if (!response.ok) await failWith(response, "The adjustment history could not be loaded.")
+  type Row = { adjustment_id: string; factor_key: string; old_score: number; new_score: number; new_category: string; reason: string; reviewer: string; created_at: string }
+  return ((await response.json()) as Row[]).map((r) => ({
+    id: r.adjustment_id, factorKey: r.factor_key, oldScore: r.old_score, newScore: r.new_score,
+    newCategory: r.new_category, reason: r.reason, reviewer: r.reviewer, at: r.created_at,
+  }))
+}
+
+/** Changes one factor. A reason is required. The backend records the logged-in account and recomputes score and category. */
+export async function saveAdjustment(itemId: string, factorKey: string, newRawValue: number, reason: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/items/${itemId}/priority/adjustments`, {
+    method: "POST",
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ factor_key: factorKey, new_raw_value: newRawValue, reason }),
+  })
+  if (!response.ok) await failWith(response, "The adjustment could not be saved.")
 }

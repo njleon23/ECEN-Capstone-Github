@@ -41,7 +41,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
@@ -49,12 +48,12 @@ import { Toaster } from "@/components/ui/sonner"
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
 import {
-  analyzeItem, attachSource, categoryLabel, detachSource, listAttachedSourceIds, restoreSavedItem,
-  saveBriefingReview, scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
+  analyzeItem, attachSource, categoryLabel, detachSource, listAdjustments, listAttachedSourceIds, restoreSavedItem,
+  saveAdjustment, saveBriefingReview, scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
 } from "./analysisApi"
-import type { ReviewRecord } from "./analysisApi"
+import type { AdjustmentRecord, ReviewRecord } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
-import { AttachPicker, ReviewHistory } from "./ReviewPanels"
+import { AdjustmentHistory, AttachPicker, FactorAdjuster, ReviewHistory } from "./ReviewPanels"
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -136,6 +135,7 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false)
   const [reviewComment, setReviewComment] = useState("")
   const [reviews, setReviews] = useState<ReviewRecord[]>([])
+  const [adjustments, setAdjustments] = useState<AdjustmentRecord[]>([])
   const [savingReview, setSavingReview] = useState(false)
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
@@ -253,18 +253,22 @@ export default function App() {
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
   const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
   const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
+  const factorLabels: Record<string, string> = Object.fromEntries((selected?.priority?.factors ?? []).map((f: any) => [f.key, f.label]))
 
-  // When an item is opened, load what is saved for it: attached sources and review history.
+  // When an item is opened, load what is saved for it: attached sources, review history and adjustments.
   useEffect(() => {
     if (!selectedId || selectedId.startsWith("mock")) return
     let cancelled = false
     setReviews([])
+    setAdjustments([])
     ;(async () => {
-      const [ids, saved] = await Promise.all([
+      const [ids, adjustmentList, saved] = await Promise.all([
         listAttachedSourceIds(selectedId).catch(() => null),
+        listAdjustments(selectedId).catch(() => [] as AdjustmentRecord[]),
         restoreSavedItem(selectedId),
       ])
       if (cancelled) return
+      setAdjustments(adjustmentList)
       setReviews(saved?.reviews ?? [])
       if (ids) setItems((current) => current.map((item) => (item.id === selectedId ? { ...item, sourceIds: ids } : item)))
     })()
@@ -298,6 +302,7 @@ export default function App() {
       else toast.success("Analysis complete. Review the draft before use.")
       const saved = await restoreSavedItem(itemId)
       setReviews(saved?.reviews ?? [])
+      setAdjustments(await listAdjustments(itemId).catch(() => [] as AdjustmentRecord[]))
       if (saved) setItems((current) => current.map((item) => (item.id === itemId ? { ...item, reviewStatus: saved.reviewStatus ?? "Needs review" } : item)))
     } catch (error) {
       handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
@@ -358,6 +363,21 @@ export default function App() {
       handleProtectedActionError(err, "The review could not be saved.")
     } finally {
       setSavingReview(false)
+    }
+  }
+
+  const submitAdjustment = async (factorKey: string, newRawValue: number, reason: string) => {
+    if (!selected || !checkAuth()) throw new Error("Sign in to adjust a factor.")
+    try {
+      if (!reason.trim()) throw new Error("A reason is required to adjust a factor.")
+      await saveAdjustment(selected.id, factorKey, newRawValue, reason.trim(), token)
+      const saved = await restoreSavedItem(selected.id)
+      if (saved) setItems((current) => current.map((item) => (item.id === selected.id ? { ...item, ...saved.fields } : item)))
+      setAdjustments(await listAdjustments(selected.id))
+      toast.success("Adjustment saved under your account, with your reason.")
+    } catch (err) {
+      handleProtectedActionError(err, "The adjustment could not be saved.")
+      throw err
     }
   }
 
@@ -755,7 +775,9 @@ export default function App() {
                         <div className="mb-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <h3 className="font-semibold">Transparent rubric</h3>
-                            <p className="mt-1 text-sm leading-5 text-slate-500">Adjust the evidence-based factors.</p>
+                            <p className="mt-1 text-sm leading-5 text-slate-500">
+                              {isReal ? "A reviewer can change one factor. A reason is required, and the change is saved under your account name." : "Adjust the evidence-based factors."}
+                            </p>
                           </div>
                           <div className="min-w-44">
                             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
@@ -775,21 +797,15 @@ export default function App() {
                                 </div>
                                 <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.points}</div>
                               </div>
-                              <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                                <Slider
-                                  min={0}
-                                  max={factor.maxPoints ?? 2.5}
-                                  step={0.5}
-                                  value={[factor.points]}
-                                  disabled
-                                  aria-label={`${factor.label} score`}
-                                  className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 opacity-50"
-                                />
-                                <span className="text-xs text-slate-500">of {factor.maxPoints ?? 2.5} max</span>
-                              </div>
+                              <FactorAdjuster
+                                factor={factor}
+                                canAdjust={isReal && selected.score != null && !selected.procedural}
+                                onSave={submitAdjustment}
+                              />
                             </div>
                           ))}
                         </div>
+                        {isReal && <AdjustmentHistory adjustments={adjustments} labels={factorLabels} />}
                       </TabsContent>
 
                       <TabsContent value="evidence" className="p-5 sm:p-6">
