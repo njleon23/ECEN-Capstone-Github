@@ -444,14 +444,28 @@ async function failWith(response: Response, fallback: string): Promise<never> {
 /** Everything the page needs to show an item again after a refresh. `null` means nothing was saved. */
 export interface RestoredItem {
   fields: AnalysisFields
+  reviews: ReviewRecord[]
+  reviewStatus: "Approved" | "Needs review" | null
 }
 
-/** Loads the latest saved analysis and its briefing. Never throws. */
+function toReview(r: { review_id: string; status: ReviewRecord["status"]; reviewer: string; comments: string; reviewed_at: string }): ReviewRecord {
+  return { id: r.review_id, status: r.status, reviewer: r.reviewer, comments: r.comments, at: r.reviewed_at }
+}
+
+export function reviewStatusFor(reviews: ReviewRecord[]): "Approved" | "Needs review" | null {
+  const latest = reviews[reviews.length - 1]
+  if (!latest) return null
+  return latest.status === "approved" ? "Approved" : "Needs review"
+}
+
+/** Loads the latest saved analysis, its briefing and its review history. Never throws. */
 export async function restoreSavedItem(itemId: string): Promise<RestoredItem | null> {
   try {
     const response = await fetch(`${API_BASE_URL}/items/${itemId}/analysis`)
     if (!response.ok) return null
-    return { fields: await withLastGoodBriefing((await response.json()) as ApiJob, itemId) }
+    const fields = await withLastGoodBriefing((await response.json()) as ApiJob, itemId)
+    const reviews = fields.briefingId ? await listBriefingReviews(fields.briefingId).catch(() => []) : []
+    return { fields, reviews, reviewStatus: reviewStatusFor(reviews) }
   } catch {
     return null
   }
@@ -474,4 +488,28 @@ export async function attachSource(itemId: string, sourceId: string, token: stri
 export async function detachSource(itemId: string, sourceId: string, token: string | null): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources/${sourceId}`, { method: "DELETE", headers: authHeaders(token) })
   if (!response.ok) await failWith(response, "The source could not be detached.")
+}
+
+// ---- staff review of a briefing ------------------------------------------------------------------------------
+
+export async function listBriefingReviews(briefingId: string): Promise<ReviewRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/briefings/${briefingId}/reviews`)
+  if (!response.ok) await failWith(response, "The review history could not be loaded.")
+  return ((await response.json()) as Parameters<typeof toReview>[0][]).map(toReview)
+}
+
+/** The reviewer name is not sent: the backend records the logged-in account. */
+export async function saveBriefingReview(
+  briefingId: string,
+  status: "approved" | "rejected" | "in_review",
+  comments: string,
+  token: string | null,
+): Promise<ReviewRecord> {
+  const response = await fetch(`${API_BASE_URL}/briefings/${briefingId}/review`, {
+    method: "PATCH",
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ status, comments }),
+  })
+  if (!response.ok) await failWith(response, "The review could not be saved.")
+  return toReview(await response.json())
 }

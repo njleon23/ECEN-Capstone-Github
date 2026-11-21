@@ -50,10 +50,11 @@ import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_
 import { AgendaItem, SourceRecord } from "./api"
 import {
   analyzeItem, attachSource, categoryLabel, detachSource, listAttachedSourceIds, restoreSavedItem,
-  scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
+  saveBriefingReview, scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
 } from "./analysisApi"
+import type { ReviewRecord } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
-import { AttachPicker } from "./ReviewPanels"
+import { AttachPicker, ReviewHistory } from "./ReviewPanels"
 
 type View = "meeting" | "sources" | "evaluation"
 
@@ -67,7 +68,7 @@ async function hydrate(list: AgendaItem[]): Promise<any[]> {
     const base = withAnalysisDefaults(item)
     const saved = restored[index]
     if (!saved) return base
-    return { ...base, ...saved.fields }
+    return { ...base, ...saved.fields, ...(saved.reviewStatus ? { reviewStatus: saved.reviewStatus } : {}) }
   })
 }
 
@@ -133,6 +134,9 @@ export default function App() {
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  const [reviewComment, setReviewComment] = useState("")
+  const [reviews, setReviews] = useState<ReviewRecord[]>([])
+  const [savingReview, setSavingReview] = useState(false)
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
@@ -250,13 +254,18 @@ export default function App() {
   const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
   const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
 
-  // When an item is opened, load the sources attached to it.
+  // When an item is opened, load what is saved for it: attached sources and review history.
   useEffect(() => {
     if (!selectedId || selectedId.startsWith("mock")) return
     let cancelled = false
+    setReviews([])
     ;(async () => {
-      const ids = await listAttachedSourceIds(selectedId).catch(() => null)
+      const [ids, saved] = await Promise.all([
+        listAttachedSourceIds(selectedId).catch(() => null),
+        restoreSavedItem(selectedId),
+      ])
       if (cancelled) return
+      setReviews(saved?.reviews ?? [])
       if (ids) setItems((current) => current.map((item) => (item.id === selectedId ? { ...item, sourceIds: ids } : item)))
     })()
     return () => { cancelled = true }
@@ -287,8 +296,11 @@ export default function App() {
       if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
       else if (result.analysisState === "degraded") toast.warning("The analysis finished with a problem. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
+      const saved = await restoreSavedItem(itemId)
+      setReviews(saved?.reviews ?? [])
+      if (saved) setItems((current) => current.map((item) => (item.id === itemId ? { ...item, reviewStatus: saved.reviewStatus ?? "Needs review" } : item)))
     } catch (error) {
-       handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
+      handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
     } finally {
       setAnalyzing(false)
     }
@@ -325,6 +337,27 @@ export default function App() {
       toast.success("Source detached from this item.")
     } catch (err) {
       handleProtectedActionError(err, "The source could not be detached.")
+    }
+  }
+
+  const submitReview = async (status: "approved" | "rejected") => {
+    if (!checkAuth()) return
+    if (!selected?.briefingId) {
+      toast.error("Analyze this item first, so there is a briefing to review.")
+      return
+    }
+    setSavingReview(true)
+    try {
+      const saved = await saveBriefingReview(selected.briefingId, status, reviewComment.trim(), token)
+      setReviews((current) => [...current, saved])
+      updateSelected({ reviewStatus: status === "approved" ? "Approved" : "Needs review" })
+      setReviewComment("")
+      if (status === "approved") toast.success("Review saved: briefing approved.")
+      else toast.error("Review saved: flagged for further review.")
+    } catch (err) {
+      handleProtectedActionError(err, "The review could not be saved.")
+    } finally {
+      setSavingReview(false)
     }
   }
 
@@ -669,6 +702,8 @@ export default function App() {
                               Reviewer Comments
                             </label>
                             <Textarea
+                              value={reviewComment}
+                              onChange={(event) => setReviewComment(event.target.value)}
                               placeholder="Add internal notes, concerns, or requested edits here..."
                               className="min-h-20 resize-y border-slate-200 bg-white text-sm"
                             />
@@ -684,26 +719,35 @@ export default function App() {
                               <Button 
                                 variant="outline" 
                                 className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                                disabled={savingReview}
                                 onClick={() => {
-                                  if (!checkAuth()) return;
-                                  updateSelected({ reviewStatus: "Needs review" })
-                                  toast.error("Flagged for further review.")
+                                  if (!checkAuth()) return
+                                  if (isReal) submitReview("rejected")
+                                  else {
+                                    updateSelected({ reviewStatus: "Needs review" })
+                                    toast.error("Flagged for further review.")
+                                  }
                                 }}
                               >
                                 Reject / Flag
                               </Button>
                               <Button
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                disabled={savingReview}
                                 onClick={() => {
-                                  if (!checkAuth()) return;
-                                  updateSelected({ reviewStatus: "Approved" })
-                                  toast.success("Briefing marked as approved!")
+                                  if (!checkAuth()) return
+                                  if (isReal) submitReview("approved")
+                                  else {
+                                    updateSelected({ reviewStatus: "Approved" })
+                                    toast.success("Briefing marked as approved!")
+                                  }
                                 }}
                               >
                                 <Check className="mr-2 size-4" /> Approve Briefing
                               </Button>
                             </div>
                           </div>
+                          {isReal && <ReviewHistory reviews={reviews} />}
                         </div>
                       </TabsContent>
 
