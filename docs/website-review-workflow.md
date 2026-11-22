@@ -8,6 +8,21 @@ The briefing is written by the labeled rule-based writer unless a live model is 
 `docs/llm-setup.md` once the live provider work is merged). Scoring, source grounding, review and history
 work the same way either way.
 
+## Automated tests
+
+The website has a small test suite that runs in a simulated browser against a fake backend, so it needs no
+server or database:
+
+```bash
+cd council-brief
+npm ci
+npm test
+```
+
+`src/itemSwitching.test.tsx` covers switching from one agenda item to another while something is unsaved or
+still saving: an unsaved review comment or factor edit must stay with its own item, and a review or adjustment
+that finishes after the switch must be added to the item it was made on, not the one now on screen.
+
 ## Steps
 
 1. **Sign in.** The token is kept in memory only, so a refresh signs the user out. Saved results are still

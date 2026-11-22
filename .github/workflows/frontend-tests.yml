@@ -1,0 +1,42 @@
+name: Frontend Tests
+
+on:
+  pull_request:
+    branches:
+      - integration/mvp
+      - main
+    paths:
+      - "council-brief/**"
+      - ".github/workflows/frontend-tests.yml"
+  push:
+    branches:
+      - integration/mvp
+    paths:
+      - "council-brief/**"
+
+jobs:
+  frontend-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: council-brief/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: council-brief
+        run: npm ci
+
+      - name: Run website tests
+        working-directory: council-brief
+        run: npm test
+
+      - name: Type-check and build the website
+        working-directory: council-brief
+        run: npm run build

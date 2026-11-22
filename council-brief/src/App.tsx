@@ -53,6 +53,8 @@ import {
 } from "./analysisApi"
 import type { AdjustmentRecord, ReviewRecord } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
+import { appendFor, commentKey, factorControlKey, removeKey, setFor } from "./itemScoped"
+import type { ByItem } from "./itemScoped"
 import { AdjustmentHistory, AttachPicker, FactorAdjuster, ReviewHistory } from "./ReviewPanels"
 
 type View = "meeting" | "sources" | "evaluation"
@@ -133,10 +135,12 @@ export default function App() {
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const [reviewComment, setReviewComment] = useState("")
-  const [reviews, setReviews] = useState<ReviewRecord[]>([])
-  const [adjustments, setAdjustments] = useState<AdjustmentRecord[]>([])
-  const [savingReview, setSavingReview] = useState(false)
+  // Unsaved comments, loaded histories and in-flight saves are all kept per item, so switching items while
+  // something is still saving or loading can never show or submit one item's data under another.
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({})
+  const [reviewsByItem, setReviewsByItem] = useState<ByItem<ReviewRecord[]>>({})
+  const [adjustmentsByItem, setAdjustmentsByItem] = useState<ByItem<AdjustmentRecord[]>>({})
+  const [savingReviewFor, setSavingReviewFor] = useState<string[]>([])
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
@@ -253,14 +257,17 @@ export default function App() {
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
   const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
   const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
+  const reviews = (selected && reviewsByItem[selected.id]) || []
+  const adjustments = (selected && adjustmentsByItem[selected.id]) || []
+  const reviewKey = selected ? commentKey(selected.id, selected.briefingId) : ""
+  const reviewComment = reviewDrafts[reviewKey] ?? ""
+  const savingReview = Boolean(selected) && savingReviewFor.includes(selected.id)
   const factorLabels: Record<string, string> = Object.fromEntries((selected?.priority?.factors ?? []).map((f: any) => [f.key, f.label]))
 
   // When an item is opened, load what is saved for it: attached sources, review history and adjustments.
   useEffect(() => {
     if (!selectedId || selectedId.startsWith("mock")) return
     let cancelled = false
-    setReviews([])
-    setAdjustments([])
     ;(async () => {
       const [ids, adjustmentList, saved] = await Promise.all([
         listAttachedSourceIds(selectedId).catch(() => null),
@@ -268,8 +275,8 @@ export default function App() {
         restoreSavedItem(selectedId),
       ])
       if (cancelled) return
-      setAdjustments(adjustmentList)
-      setReviews(saved?.reviews ?? [])
+      setAdjustmentsByItem((current) => setFor(current, selectedId, adjustmentList))
+      setReviewsByItem((current) => setFor(current, selectedId, saved?.reviews ?? []))
       if (ids) setItems((current) => current.map((item) => (item.id === selectedId ? { ...item, sourceIds: ids } : item)))
     })()
     return () => { cancelled = true }
@@ -283,11 +290,13 @@ export default function App() {
     )
   }, [items, query])
 
-  const updateSelected = (update: Partial<any>) => {
+  const updateItem = (itemId: string, update: Partial<any>) => {
     setItems((current) =>
-      current.map((item) => (item.id === selected.id ? { ...item, ...update } : item)),
+      current.map((item) => (item.id === itemId ? { ...item, ...update } : item)),
     )
   }
+
+  const updateSelected = (update: Partial<any>) => updateItem(selected.id, update)
 
   const runAnalysisForSelected = async () => {
     if (!checkAuth()) return;
@@ -301,8 +310,9 @@ export default function App() {
       else if (result.analysisState === "degraded") toast.warning("The analysis finished with a problem. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
       const saved = await restoreSavedItem(itemId)
-      setReviews(saved?.reviews ?? [])
-      setAdjustments(await listAdjustments(itemId).catch(() => [] as AdjustmentRecord[]))
+      const adjustmentList = await listAdjustments(itemId).catch(() => [] as AdjustmentRecord[])
+      setReviewsByItem((current) => setFor(current, itemId, saved?.reviews ?? []))
+      setAdjustmentsByItem((current) => setFor(current, itemId, adjustmentList))
       if (saved) setItems((current) => current.map((item) => (item.id === itemId ? { ...item, reviewStatus: saved.reviewStatus ?? "Needs review" } : item)))
     } catch (error) {
       handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
@@ -351,29 +361,35 @@ export default function App() {
       toast.error("Analyze this item first, so there is a briefing to review.")
       return
     }
-    setSavingReview(true)
+    // Everything this save needs is read now. The reviewer may open another item before it finishes.
+    const itemId = selected.id
+    const briefingId = selected.briefingId
+    const key = commentKey(itemId, briefingId)
+    const comment = reviewComment.trim()
+    setSavingReviewFor((current) => [...current, itemId])
     try {
-      const saved = await saveBriefingReview(selected.briefingId, status, reviewComment.trim(), token)
-      setReviews((current) => [...current, saved])
-      updateSelected({ reviewStatus: status === "approved" ? "Approved" : "Needs review" })
-      setReviewComment("")
+      const saved = await saveBriefingReview(briefingId, status, comment, token)
+      setReviewsByItem((current) => appendFor(current, itemId, saved))
+      updateItem(itemId, { reviewStatus: status === "approved" ? "Approved" : "Needs review" })
+      setReviewDrafts((current) => removeKey(current, key))
       if (status === "approved") toast.success("Review saved: briefing approved.")
       else toast.error("Review saved: flagged for further review.")
     } catch (err) {
       handleProtectedActionError(err, "The review could not be saved.")
     } finally {
-      setSavingReview(false)
+      setSavingReviewFor((current) => current.filter((id) => id !== itemId))
     }
   }
 
-  const submitAdjustment = async (factorKey: string, newRawValue: number, reason: string) => {
-    if (!selected || !checkAuth()) throw new Error("Sign in to adjust a factor.")
+  const submitAdjustment = async (itemId: string, factorKey: string, newRawValue: number, reason: string) => {
+    if (!checkAuth()) throw new Error("Sign in to adjust a factor.")
     try {
       if (!reason.trim()) throw new Error("A reason is required to adjust a factor.")
-      await saveAdjustment(selected.id, factorKey, newRawValue, reason.trim(), token)
-      const saved = await restoreSavedItem(selected.id)
-      if (saved) setItems((current) => current.map((item) => (item.id === selected.id ? { ...item, ...saved.fields } : item)))
-      setAdjustments(await listAdjustments(selected.id))
+      await saveAdjustment(itemId, factorKey, newRawValue, reason.trim(), token)
+      const saved = await restoreSavedItem(itemId)
+      if (saved) updateItem(itemId, saved.fields)
+      const adjustmentList = await listAdjustments(itemId)
+      setAdjustmentsByItem((current) => setFor(current, itemId, adjustmentList))
       toast.success("Adjustment saved under your account, with your reason.")
     } catch (err) {
       handleProtectedActionError(err, "The adjustment could not be saved.")
@@ -723,7 +739,7 @@ export default function App() {
                             </label>
                             <Textarea
                               value={reviewComment}
-                              onChange={(event) => setReviewComment(event.target.value)}
+                              onChange={(event) => setReviewDrafts((current) => ({ ...current, [reviewKey]: event.target.value }))}
                               placeholder="Add internal notes, concerns, or requested edits here..."
                               className="min-h-20 resize-y border-slate-200 bg-white text-sm"
                             />
@@ -798,9 +814,10 @@ export default function App() {
                                 <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.points}</div>
                               </div>
                               <FactorAdjuster
+                                key={factorControlKey(selected.id, selected.jobId, factor.key)}
                                 factor={factor}
                                 canAdjust={isReal && selected.score != null && !selected.procedural}
-                                onSave={submitAdjustment}
+                                onSave={(factorKey, newRawValue, reason) => submitAdjustment(selected.id, factorKey, newRawValue, reason)}
                               />
                             </div>
                           ))}
