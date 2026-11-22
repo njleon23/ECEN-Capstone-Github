@@ -274,6 +274,10 @@ The current integrated demonstration supports the following sequence:
 9. Retrieve and display the source in the Source Library.
 10. Restart the application and verify that the records remain available.
 
+After signing in, a reviewer can also attach approved sources to an item, analyze it, approve or reject the
+briefing, and adjust a priority factor with a reason. Each step is saved with the signed-in account name and
+survives a page refresh. See `docs/website-review-workflow.md`.
+
 ## Current Limitations
 
 The following capabilities are still under development:

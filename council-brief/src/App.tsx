@@ -41,17 +41,37 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { Slider } from "@/components/ui/slider"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
 
 import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
 import { AgendaItem, SourceRecord } from "./api"
-import { analyzeItem, categoryLabel, writerLabel, scoreLabel, setSourceApproval, withAnalysisDefaults } from "./analysisApi"
+import {
+  analyzeItem, attachSource, categoryLabel, detachSource, listAdjustments, listAttachedSourceIds, restoreSavedItem,
+  saveAdjustment, saveBriefingReview, scoreLabel, setSourceApproval, withAnalysisDefaults, writerLabel,
+} from "./analysisApi"
+import type { AdjustmentRecord, ReviewRecord } from "./analysisApi"
 import { FollowUpBox } from "./FollowUpBox"
+import { appendFor, commentKey, factorControlKey, removeKey, setFor } from "./itemScoped"
+import type { ByItem } from "./itemScoped"
+import { AdjustmentHistory, AttachPicker, FactorAdjuster, ReviewHistory } from "./ReviewPanels"
 
 type View = "meeting" | "sources" | "evaluation"
+
+/**
+ * Adds the saved analysis, briefing and review status to each item, so results are still there after a refresh.
+ * Items with nothing saved keep their defaults. A failed lookup never blocks the page.
+ */
+async function hydrate(list: AgendaItem[]): Promise<any[]> {
+  const restored = await Promise.all(list.map((item) => restoreSavedItem(item.id)))
+  return list.map((item, index) => {
+    const base = withAnalysisDefaults(item)
+    const saved = restored[index]
+    if (!saved) return base
+    return { ...base, ...saved.fields, ...(saved.reviewStatus ? { reviewStatus: saved.reviewStatus } : {}) }
+  })
+}
 
 function priorityStyle(priority: string | null) {
   if (priority === "High") return "border-rose-200 bg-rose-50 text-rose-700"
@@ -115,6 +135,12 @@ export default function App() {
   const [sourceOpen, setSourceOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  // Unsaved comments, loaded histories and in-flight saves are all kept per item, so switching items while
+  // something is still saving or loading can never show or submit one item's data under another.
+  const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({})
+  const [reviewsByItem, setReviewsByItem] = useState<ByItem<ReviewRecord[]>>({})
+  const [adjustmentsByItem, setAdjustmentsByItem] = useState<ByItem<AdjustmentRecord[]>>({})
+  const [savingReviewFor, setSavingReviewFor] = useState<string[]>([])
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
@@ -127,7 +153,7 @@ export default function App() {
       try {
         const [agendaData, sourceData] = await Promise.all([fetchAgendas(), fetchSources()])
         if (agendaData && agendaData.length > 0) {
-          setItems(agendaData.map(withAnalysisDefaults))
+          setItems(await hydrate(agendaData))
           setSelectedId(agendaData[0].id)
         }
         if (sourceData) {
@@ -229,6 +255,32 @@ export default function App() {
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
+  const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
+  const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
+  const reviews = (selected && reviewsByItem[selected.id]) || []
+  const adjustments = (selected && adjustmentsByItem[selected.id]) || []
+  const reviewKey = selected ? commentKey(selected.id, selected.briefingId) : ""
+  const reviewComment = reviewDrafts[reviewKey] ?? ""
+  const savingReview = Boolean(selected) && savingReviewFor.includes(selected.id)
+  const factorLabels: Record<string, string> = Object.fromEntries((selected?.priority?.factors ?? []).map((f: any) => [f.key, f.label]))
+
+  // When an item is opened, load what is saved for it: attached sources, review history and adjustments.
+  useEffect(() => {
+    if (!selectedId || selectedId.startsWith("mock")) return
+    let cancelled = false
+    ;(async () => {
+      const [ids, adjustmentList, saved] = await Promise.all([
+        listAttachedSourceIds(selectedId).catch(() => null),
+        listAdjustments(selectedId).catch(() => [] as AdjustmentRecord[]),
+        restoreSavedItem(selectedId),
+      ])
+      if (cancelled) return
+      setAdjustmentsByItem((current) => setFor(current, selectedId, adjustmentList))
+      setReviewsByItem((current) => setFor(current, selectedId, saved?.reviews ?? []))
+      if (ids) setItems((current) => current.map((item) => (item.id === selectedId ? { ...item, sourceIds: ids } : item)))
+    })()
+    return () => { cancelled = true }
+  }, [selectedId])
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -238,11 +290,13 @@ export default function App() {
     )
   }, [items, query])
 
-  const updateSelected = (update: Partial<any>) => {
+  const updateItem = (itemId: string, update: Partial<any>) => {
     setItems((current) =>
-      current.map((item) => (item.id === selected.id ? { ...item, ...update } : item)),
+      current.map((item) => (item.id === itemId ? { ...item, ...update } : item)),
     )
   }
+
+  const updateSelected = (update: Partial<any>) => updateItem(selected.id, update)
 
   const runAnalysisForSelected = async () => {
     if (!checkAuth()) return;
@@ -253,9 +307,15 @@ export default function App() {
       const result = await analyzeItem(itemId, token)
       setItems((current) => current.map((item) => (item.id === itemId ? { ...item, ...result } : item)))
       if (result.analysisState === "failed") toast.error("This item could not be analyzed. See Verification needed below.")
+      else if (result.analysisState === "degraded") toast.warning("The analysis finished with a problem. See Verification needed below.")
       else toast.success("Analysis complete. Review the draft before use.")
+      const saved = await restoreSavedItem(itemId)
+      const adjustmentList = await listAdjustments(itemId).catch(() => [] as AdjustmentRecord[])
+      setReviewsByItem((current) => setFor(current, itemId, saved?.reviews ?? []))
+      setAdjustmentsByItem((current) => setFor(current, itemId, adjustmentList))
+      if (saved) setItems((current) => current.map((item) => (item.id === itemId ? { ...item, reviewStatus: saved.reviewStatus ?? "Needs review" } : item)))
     } catch (error) {
-       handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
+      handleProtectedActionError(error, "Failed to run analysis. Check permissions.")
     } finally {
       setAnalyzing(false)
     }
@@ -273,6 +333,70 @@ export default function App() {
     }
   }
 
+  const attachToSelected = async (source: SourceRecord) => {
+    if (!selected || !checkAuth()) return
+    try {
+      await attachSource(selected.id, source.id, token)
+      updateSelected({ sourceIds: [...(selected.sourceIds ?? []), source.id] })
+      toast.success(source.approved ? "Source attached. Run the analysis again to use it." : "Source attached. It is not approved yet, so it will not be used until it is.")
+    } catch (err) {
+      handleProtectedActionError(err, "The source could not be attached.")
+    }
+  }
+
+  const detachFromSelected = async (source: SourceRecord) => {
+    if (!selected || !checkAuth()) return
+    try {
+      await detachSource(selected.id, source.id, token)
+      updateSelected({ sourceIds: (selected.sourceIds ?? []).filter((id: string) => id !== source.id) })
+      toast.success("Source detached from this item.")
+    } catch (err) {
+      handleProtectedActionError(err, "The source could not be detached.")
+    }
+  }
+
+  const submitReview = async (status: "approved" | "rejected") => {
+    if (!checkAuth()) return
+    if (!selected?.briefingId) {
+      toast.error("Analyze this item first, so there is a briefing to review.")
+      return
+    }
+    // Everything this save needs is read now. The reviewer may open another item before it finishes.
+    const itemId = selected.id
+    const briefingId = selected.briefingId
+    const key = commentKey(itemId, briefingId)
+    const comment = reviewComment.trim()
+    setSavingReviewFor((current) => [...current, itemId])
+    try {
+      const saved = await saveBriefingReview(briefingId, status, comment, token)
+      setReviewsByItem((current) => appendFor(current, itemId, saved))
+      updateItem(itemId, { reviewStatus: status === "approved" ? "Approved" : "Needs review" })
+      setReviewDrafts((current) => removeKey(current, key))
+      if (status === "approved") toast.success("Review saved: briefing approved.")
+      else toast.error("Review saved: flagged for further review.")
+    } catch (err) {
+      handleProtectedActionError(err, "The review could not be saved.")
+    } finally {
+      setSavingReviewFor((current) => current.filter((id) => id !== itemId))
+    }
+  }
+
+  const submitAdjustment = async (itemId: string, factorKey: string, newRawValue: number, reason: string) => {
+    if (!checkAuth()) throw new Error("Sign in to adjust a factor.")
+    try {
+      if (!reason.trim()) throw new Error("A reason is required to adjust a factor.")
+      await saveAdjustment(itemId, factorKey, newRawValue, reason.trim(), token)
+      const saved = await restoreSavedItem(itemId)
+      if (saved) updateItem(itemId, saved.fields)
+      const adjustmentList = await listAdjustments(itemId)
+      setAdjustmentsByItem((current) => setFor(current, itemId, adjustmentList))
+      toast.success("Adjustment saved under your account, with your reason.")
+    } catch (err) {
+      handleProtectedActionError(err, "The adjustment could not be saved.")
+      throw err
+    }
+  }
+
   const processAgenda = async () => {
     if (!checkAuth()) return;
     if (!agendaFile) {
@@ -283,7 +407,7 @@ export default function App() {
     try {
       await uploadAgendaPdf(agendaFile, token)
       const updatedAgendas = await fetchAgendas()
-      setItems(updatedAgendas.map(withAnalysisDefaults))
+      setItems(await hydrate(updatedAgendas))
       if (updatedAgendas.length > 0) {
         setSelectedId(updatedAgendas[0].id)
       }
@@ -320,7 +444,16 @@ export default function App() {
       const savedSource = await addSourceRecord(newSource, token)
       setSources((current) => [savedSource, ...current])
       if (selected) {
-        updateSelected({ sourceIds: [...selected.sourceIds, savedSource.id] })
+        if (isReal) {
+          try {
+            await attachSource(selected.id, savedSource.id, token)
+            updateSelected({ sourceIds: [...(selected.sourceIds ?? []), savedSource.id] })
+          } catch {
+            toast.error("The source was saved but could not be attached to this item. Attach it from the Evidence tab.")
+          }
+        } else {
+          updateSelected({ sourceIds: [...(selected.sourceIds ?? []), savedSource.id] })
+        }
       }
       setSourceOpen(false)
       setSourceTitle("")
@@ -605,6 +738,8 @@ export default function App() {
                               Reviewer Comments
                             </label>
                             <Textarea
+                              value={reviewComment}
+                              onChange={(event) => setReviewDrafts((current) => ({ ...current, [reviewKey]: event.target.value }))}
                               placeholder="Add internal notes, concerns, or requested edits here..."
                               className="min-h-20 resize-y border-slate-200 bg-white text-sm"
                             />
@@ -620,26 +755,35 @@ export default function App() {
                               <Button 
                                 variant="outline" 
                                 className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
+                                disabled={savingReview}
                                 onClick={() => {
-                                  if (!checkAuth()) return;
-                                  updateSelected({ reviewStatus: "Needs review" })
-                                  toast.error("Flagged for further review.")
+                                  if (!checkAuth()) return
+                                  if (isReal) submitReview("rejected")
+                                  else {
+                                    updateSelected({ reviewStatus: "Needs review" })
+                                    toast.error("Flagged for further review.")
+                                  }
                                 }}
                               >
                                 Reject / Flag
                               </Button>
                               <Button
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                disabled={savingReview}
                                 onClick={() => {
-                                  if (!checkAuth()) return;
-                                  updateSelected({ reviewStatus: "Approved" })
-                                  toast.success("Briefing marked as approved!")
+                                  if (!checkAuth()) return
+                                  if (isReal) submitReview("approved")
+                                  else {
+                                    updateSelected({ reviewStatus: "Approved" })
+                                    toast.success("Briefing marked as approved!")
+                                  }
                                 }}
                               >
                                 <Check className="mr-2 size-4" /> Approve Briefing
                               </Button>
                             </div>
                           </div>
+                          {isReal && <ReviewHistory reviews={reviews} />}
                         </div>
                       </TabsContent>
 
@@ -647,7 +791,9 @@ export default function App() {
                         <div className="mb-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <h3 className="font-semibold">Transparent rubric</h3>
-                            <p className="mt-1 text-sm leading-5 text-slate-500">Adjust the evidence-based factors.</p>
+                            <p className="mt-1 text-sm leading-5 text-slate-500">
+                              {isReal ? "A reviewer can change one factor. A reason is required, and the change is saved under your account name." : "Adjust the evidence-based factors."}
+                            </p>
                           </div>
                           <div className="min-w-44">
                             <div className="mb-2 flex items-center justify-between text-sm font-semibold">
@@ -667,21 +813,16 @@ export default function App() {
                                 </div>
                                 <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#0b1f33] text-sm font-bold text-white">{factor.points}</div>
                               </div>
-                              <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                                <Slider
-                                  min={0}
-                                  max={factor.maxPoints ?? 2.5}
-                                  step={0.5}
-                                  value={[factor.points]}
-                                  disabled
-                                  aria-label={`${factor.label} score`}
-                                  className="[&_[data-slot=slider-range]]:bg-blue-600 [&_[data-slot=slider-thumb]]:border-blue-600 opacity-50"
-                                />
-                                <span className="text-xs text-slate-500">of {factor.maxPoints ?? 2.5} max</span>
-                              </div>
+                              <FactorAdjuster
+                                key={factorControlKey(selected.id, selected.jobId, factor.key)}
+                                factor={factor}
+                                canAdjust={isReal && selected.score != null && !selected.procedural}
+                                onSave={(factorKey, newRawValue, reason) => submitAdjustment(selected.id, factorKey, newRawValue, reason)}
+                              />
                             </div>
                           ))}
                         </div>
+                        {isReal && <AdjustmentHistory adjustments={adjustments} labels={factorLabels} />}
                       </TabsContent>
 
                       <TabsContent value="evidence" className="p-5 sm:p-6">
@@ -694,11 +835,12 @@ export default function App() {
                         </div>
                         {selectedSources.length > 0 ? (
                           <div className="space-y-3">
-                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} onToggleApproval={toggleApproval} />)}
+                            {selectedSources.map((source) => <SourceCard key={source.id} source={source} onToggleApproval={toggleApproval} onDetach={isReal ? detachFromSelected : undefined} />)}
                           </div>
                         ) : (
-                          <EmptySection>No supporting sources attached yet.</EmptySection>
+                          <EmptySection>No sources are attached to this item yet. Only approved sources attached to an item are used in its analysis.</EmptySection>
                         )}
+                        {isReal && <AttachPicker available={unattachedSources} onAttach={attachToSelected} />}
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -911,7 +1053,7 @@ function EditableList({ title, icon: Icon, items, onChange }: { title: string; i
   )
 }
 
-function SourceCard({ source, expanded = false, onToggleApproval }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void }) {
+function SourceCard({ source, expanded = false, onToggleApproval, onDetach }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void; onDetach?: (source: SourceRecord) => void }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-4">
@@ -934,11 +1076,18 @@ function SourceCard({ source, expanded = false, onToggleApproval }: { source: So
         )}
       </div>
       <p className={`mt-3 text-sm leading-6 text-slate-600 ${expanded ? "" : "line-clamp-3"}`}>{source.excerpt}</p>
-      {onToggleApproval && typeof source.approved === "boolean" && (
-        <Button size="sm" variant="outline" className="mt-3" onClick={() => onToggleApproval(source)}>
-          {source.approved ? "Withdraw approval" : "Approve source"}
-        </Button>
-      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {onToggleApproval && typeof source.approved === "boolean" && (
+          <Button size="sm" variant="outline" onClick={() => onToggleApproval(source)}>
+            {source.approved ? "Withdraw approval" : "Approve source"}
+          </Button>
+        )}
+        {onDetach && (
+          <Button size="sm" variant="ghost" className="text-slate-600" onClick={() => onDetach(source)}>
+            Detach from this item
+          </Button>
+        )}
+      </div>
       {source.fileName && <p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><FileText className="size-3.5" /> {source.fileName}</p>}
     </div>
   )

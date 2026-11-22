@@ -41,6 +41,7 @@ interface ApiFactor {
   label: string
   explanation: string
   weight: number
+  raw_value: number
   contribution: number
 }
 
@@ -49,9 +50,11 @@ interface ApiPriority {
   category: Category | null
   evidence_level: EvidenceLevel
   factors: ApiFactor[]
+  manual_adjustment?: { factor_key: string; reason: string; reviewer_id: string; old_value: number; new_value: number } | null
 }
 
 interface ApiBriefing {
+  briefing_id: string
   status: string
   summary: string
   key_facts: ApiClaim[]
@@ -99,6 +102,33 @@ export interface UiFactor {
   explanation: string
   points: number
   maxPoints: number
+  /** 0 to 1, as the backend stores it. A reviewer adjustment sends this value. */
+  rawValue: number
+}
+
+export interface UiAdjustment {
+  factorKey: string
+  reason: string
+  reviewer: string
+}
+
+export interface AdjustmentRecord {
+  id: string
+  factorKey: string
+  oldScore: number
+  newScore: number
+  newCategory: string
+  reason: string
+  reviewer: string
+  at: string
+}
+
+export interface ReviewRecord {
+  id: string
+  status: "draft" | "in_review" | "approved" | "rejected"
+  reviewer: string
+  comments: string
+  at: string
 }
 
 export interface AnalysisFields {
@@ -114,8 +144,12 @@ export interface AnalysisFields {
   talking_points: UiClaim[]
   missingInformation: string[]
   summary?: string
-  sourceIds?: string[]
+  /** Sources the briefing actually used. The sources attached to the item are `sourceIds` on the item. */
+  usedSourceIds?: string[]
   modelId?: string
+  jobId?: string
+  briefingId?: string
+  adjustment?: UiAdjustment | null
 }
 
 export interface FollowUpResult {
@@ -193,7 +227,7 @@ export function withAnalysisDefaults<T extends object>(item: T): T & AnalysisFie
 
 // ---- mapping a finished job ----------------------------------------------------------------
 
-export function jobToFields(job: ApiJob): AnalysisFields {
+export function jobToFields(job: ApiJob, keptPreviousBriefing = false): AnalysisFields {
   const priority = job.priority
   const briefing = job.briefing
   const byId = new Map<string, UiCitation>((briefing?.citations ?? []).map((c) => [c.citation_id, toUiCitation(c)]))
@@ -202,9 +236,16 @@ export function jobToFields(job: ApiJob): AnalysisFields {
 
   const notes: string[] = []
   if (job.error?.code === "INSUFFICIENT_EVIDENCE") {
-    notes.push("No approved source matched this item, so no score was generated. Approve a related source in the Source Library, then run the analysis again.")
+    notes.push("No approved source attached to this item matched it, so no score was generated. In the Evidence tab, attach a related source and make sure it is approved, then analyze the item again.")
   } else if (job.error) {
     notes.push(`The briefing could not be completed: ${job.error.message}${priority?.score != null ? " The score is still shown." : ""}`)
+  }
+  if (keptPreviousBriefing && job.error) {
+    notes.unshift(`The latest run could not write a new briefing (${job.error.message}) The last saved briefing is shown below.`)
+  }
+  if (priority?.manual_adjustment) {
+    const a = priority.manual_adjustment
+    notes.push(`A reviewer (${a.reviewer_id}) adjusted this score: ${a.reason}`)
   }
   if (briefing) {
     notes.push(...briefing.warnings)
@@ -230,6 +271,7 @@ export function jobToFields(job: ApiJob): AnalysisFields {
         explanation: f.explanation,
         points: round(f.contribution),
         maxPoints: round(f.weight * 10),
+        rawValue: f.raw_value,
       })),
     },
     key_facts: claims(briefing?.key_facts),
@@ -247,10 +289,15 @@ export function jobToFields(job: ApiJob): AnalysisFields {
     talking_points: claims(briefing?.talking_points),
     missingInformation: notes,
   }
+  fields.jobId = job.job_id
+  fields.adjustment = priority?.manual_adjustment
+    ? { factorKey: priority.manual_adjustment.factor_key, reason: priority.manual_adjustment.reason, reviewer: priority.manual_adjustment.reviewer_id }
+    : null
   if (briefing) {
     fields.summary = briefing.summary
-    fields.sourceIds = briefing.source_ids
+    fields.usedSourceIds = briefing.source_ids
     fields.modelId = briefing.model_id
+    fields.briefingId = briefing.briefing_id
   }
   return fields
 }
@@ -275,6 +322,21 @@ function failedFields(message: string): AnalysisFields {
   return { ...(withAnalysisDefaults({}) as AnalysisFields), analysisState: "failed", missingInformation: [message] }
 }
 
+/**
+ * When a run fails because the model failed (not because evidence is missing), the backend keeps the last good
+ * briefing. This fetches it so the page can keep showing it next to the clear error message.
+ */
+async function withLastGoodBriefing(job: ApiJob, itemId: string): Promise<AnalysisFields> {
+  if (job.briefing || job.error?.code === "INSUFFICIENT_EVIDENCE" || !job.error) return jobToFields(job)
+  try {
+    const response = await fetch(`${API_BASE_URL}/items/${itemId}/briefing`)
+    if (response.ok) return jobToFields({ ...job, briefing: (await response.json()) as ApiBriefing }, true)
+  } catch {
+    // fall through: show the error without a briefing
+  }
+  return jobToFields(job)
+}
+
 async function analyzeOne(itemId: string, token: string | null): Promise<AnalysisFields> {
   try {
     const headers: HeadersInit = {}
@@ -290,7 +352,7 @@ async function analyzeOne(itemId: string, token: string | null): Promise<Analysi
       return failedFields(message)
     }
     const { job_id } = (await started.json()) as { job_id: string }
-    return jobToFields(await waitForJob(job_id))
+    return await withLastGoodBriefing(await waitForJob(job_id), itemId)
   } catch (error) {
     // Session and rate-limit problems go to the screen, which signs the user in again or shows the retry message.
     if (isAuthOrRateLimit(error)) throw error
@@ -365,4 +427,115 @@ export async function askFollowUp(itemId: string, question: string, token: strin
 
   if (response.status === 401 || response.status === 429) throw new ApiError(message, response.status)
   return { status: code === "INSUFFICIENT_EVIDENCE" ? "insufficient_evidence" : "error", text: message, citations: [] }
+}
+
+// ---- shared request helpers --------------------------------------------------------------------------------------
+
+function authHeaders(token: string | null, json = false): HeadersInit {
+  const headers: Record<string, string> = {}
+  if (json) headers["Content-Type"] = "application/json"
+  if (token) headers["Authorization"] = `Bearer ${token}`
+  return headers
+}
+
+/** Throws an ApiError carrying the status, so the screen can sign the user in again on 401 or show the retry message on 429. */
+async function failWith(response: Response, fallback: string): Promise<never> {
+  throw new ApiError(await readErrorMessage(response, fallback), response.status)
+}
+
+// ---- saved results: what survives a page refresh ---------------------------------------------------------
+
+/** Everything the page needs to show an item again after a refresh. `null` means nothing was saved. */
+export interface RestoredItem {
+  fields: AnalysisFields
+  reviews: ReviewRecord[]
+  reviewStatus: "Approved" | "Needs review" | null
+}
+
+function toReview(r: { review_id: string; status: ReviewRecord["status"]; reviewer: string; comments: string; reviewed_at: string }): ReviewRecord {
+  return { id: r.review_id, status: r.status, reviewer: r.reviewer, comments: r.comments, at: r.reviewed_at }
+}
+
+export function reviewStatusFor(reviews: ReviewRecord[]): "Approved" | "Needs review" | null {
+  const latest = reviews[reviews.length - 1]
+  if (!latest) return null
+  return latest.status === "approved" ? "Approved" : "Needs review"
+}
+
+/** Loads the latest saved analysis, its briefing and its review history. Never throws. */
+export async function restoreSavedItem(itemId: string): Promise<RestoredItem | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/items/${itemId}/analysis`)
+    if (!response.ok) return null
+    const fields = await withLastGoodBriefing((await response.json()) as ApiJob, itemId)
+    const reviews = fields.briefingId ? await listBriefingReviews(fields.briefingId).catch(() => []) : []
+    return { fields, reviews, reviewStatus: reviewStatusFor(reviews) }
+  } catch {
+    return null
+  }
+}
+
+// ---- sources attached to an item ---------------------------------------------------------------------------
+
+/** Ids of the sources attached to an item. Only approved, attached sources are used by the analysis. */
+export async function listAttachedSourceIds(itemId: string): Promise<string[]> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources`)
+  if (!response.ok) await failWith(response, "The attached sources could not be loaded.")
+  return ((await response.json()) as Array<{ source_id: string }>).map((s) => s.source_id)
+}
+
+export async function attachSource(itemId: string, sourceId: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources/${sourceId}`, { method: "POST", headers: authHeaders(token) })
+  if (!response.ok) await failWith(response, "The source could not be attached.")
+}
+
+export async function detachSource(itemId: string, sourceId: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/agenda-items/${itemId}/sources/${sourceId}`, { method: "DELETE", headers: authHeaders(token) })
+  if (!response.ok) await failWith(response, "The source could not be detached.")
+}
+
+// ---- staff review of a briefing ------------------------------------------------------------------------------
+
+export async function listBriefingReviews(briefingId: string): Promise<ReviewRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/briefings/${briefingId}/reviews`)
+  if (!response.ok) await failWith(response, "The review history could not be loaded.")
+  return ((await response.json()) as Parameters<typeof toReview>[0][]).map(toReview)
+}
+
+/** The reviewer name is not sent: the backend records the logged-in account. */
+export async function saveBriefingReview(
+  briefingId: string,
+  status: "approved" | "rejected" | "in_review",
+  comments: string,
+  token: string | null,
+): Promise<ReviewRecord> {
+  const response = await fetch(`${API_BASE_URL}/briefings/${briefingId}/review`, {
+    method: "PATCH",
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ status, comments }),
+  })
+  if (!response.ok) await failWith(response, "The review could not be saved.")
+  return toReview(await response.json())
+}
+
+// ---- reviewer adjustment of a priority factor (FSR ANA-007) -----------------------------------------------------
+
+export async function listAdjustments(itemId: string): Promise<AdjustmentRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/items/${itemId}/priority/adjustments`)
+  if (!response.ok) await failWith(response, "The adjustment history could not be loaded.")
+  type Row = { adjustment_id: string; factor_key: string; old_score: number; new_score: number; new_category: string; reason: string; reviewer: string; created_at: string }
+  return ((await response.json()) as Row[]).map((r) => ({
+    id: r.adjustment_id, factorKey: r.factor_key, oldScore: r.old_score, newScore: r.new_score,
+    newCategory: r.new_category, reason: r.reason, reviewer: r.reviewer, at: r.created_at,
+  }))
+}
+
+/** Changes one factor. A reason is required. The backend records the logged-in account and recomputes score and category. */
+export async function saveAdjustment(itemId: string, factorKey: string, newRawValue: number, reason: string, token: string | null): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/items/${itemId}/priority/adjustments`, {
+    method: "POST",
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ factor_key: factorKey, new_raw_value: newRawValue, reason }),
+  })
+  if (!response.ok) await failWith(response, "The adjustment could not be saved.")
 }
