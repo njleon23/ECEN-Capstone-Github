@@ -1,7 +1,12 @@
 # Agenda parsing validation (FSR ING-004, PER-002)
 
-The FSR asks for at least 90% precision and recall over **10 agendas**. Two are
-saved here. Eight more are needed to finish the requirement.
+The FSR asks for at least 90% precision and recall over **10 representative
+agendas**. This directory now provides ten fictional TXT/Markdown cases, with
+plain numbering, nested items, alternate separators and Markdown headings.
+These are controlled regression fixtures, not evidence of accuracy on City
+agendas or PDF layouts. Review the answer keys and evaluate actual searchable
+City agendas before claiming representative coverage. Manual item correction
+(ING-006) is a separate demonstration criterion.
 
 ## Run it
 
@@ -38,7 +43,8 @@ higher), **Partial** (fewer than 10 agendas, or a rate below 90%), or **Open**
 
 Scoring: an item counts as correct when its number and title both match
 (case and extra spaces ignored). Precision is correct items divided by items the
-parser found; recall is correct items divided by items you listed.
+parser found; recall is correct items divided by items you listed. A rejected
+agenda is reported and all of its labeled items count as misses.
 
 The saved files here are fictional demonstration agendas. Their item lists were
 written from the agenda text, not from parser output, but a team member should

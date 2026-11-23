@@ -1,0 +1,23 @@
+{
+  "file": "clear-falls-planning.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Parenthesis delimiters, including a multi-digit item number.",
+  "items": [
+    {
+      "item_number": "8",
+      "title": "Planning Commission Report"
+    },
+    {
+      "item_number": "9",
+      "title": "Public Hearing on the Riverfront District"
+    },
+    {
+      "item_number": "10",
+      "title": "Designation of a Historic Landmark"
+    },
+    {
+      "item_number": "11",
+      "title": "Adjournment"
+    }
+  ]
+}

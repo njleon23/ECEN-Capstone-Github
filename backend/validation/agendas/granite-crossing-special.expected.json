@@ -1,0 +1,23 @@
+{
+  "file": "granite-crossing-special.md",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Markdown agenda with numbered headings, unnumbered sections, and bullet details.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order"
+    },
+    {
+      "item_number": "2",
+      "title": "Citizen Comments"
+    },
+    {
+      "item_number": "3",
+      "title": "Consideration of a Library Remodel"
+    },
+    {
+      "item_number": "4",
+      "title": "Adjournment"
+    }
+  ]
+}

@@ -33,7 +33,8 @@ def extract_text(file_name: str, content: bytes) -> str:
 
     if extension in {".txt", ".md"}:
         try:
-            text = content.decode("utf-8")
+            # Windows exports can include a BOM before the first item number.
+            text = content.decode("utf-8-sig")
         except UnicodeDecodeError as error:
             raise AgendaParserError(
                 "The text file must use UTF-8 encoding."
@@ -64,10 +65,10 @@ def parse_agenda_items(text: str, agenda_id: str) -> list[AgendaItem]:
     lines = text.splitlines()
 
     item_pattern = re.compile(
-        r"^\s*(?:ITEM\s+)?"
+        r"^[ \t]*(?:#{1,6}[ \t]+)?(?:ITEM[ \t]+)?"
         r"(?P<number>\d+(?:\.\d+)*)"
-        r"(?:[.)])?\s+"
-        r"(?P<title>.{3,250})\s*$",
+        r"(?:[ \t]*[:\-–—][ \t]+|[.)]?[ \t]+)"
+        r"(?P<title>\S.{1,248}\S)[ \t]*$",
         re.IGNORECASE,
     )
 

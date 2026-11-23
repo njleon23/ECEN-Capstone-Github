@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from app.analysis.evaluation import parser_precision_recall, _norm_item
-from app.services.agenda_parser import extract_text, parse_agenda_items
+from app.services.agenda_parser import AgendaParserError, extract_text, parse_agenda_items
 
 HERE = Path(__file__).resolve().parent
 AGENDA_DIR = HERE / "agendas"
@@ -34,10 +34,16 @@ REQUIRED_RATE = 0.90
 def evaluate_agenda(expected_path: Path) -> Dict[str, Any]:
     spec = json.loads(expected_path.read_text(encoding="utf-8"))
     agenda_path = (expected_path.parent / spec["file"]).resolve()
-    text = extract_text(agenda_path.name, agenda_path.read_bytes())
-    parsed = parse_agenda_items(text, agenda_id="validation")
-
     expected = [(i["item_number"], i["title"]) for i in spec["items"]]
+    parse_error = None
+    try:
+        text = extract_text(agenda_path.name, agenda_path.read_bytes())
+        parsed = parse_agenda_items(text, agenda_id="validation")
+    except AgendaParserError as error:
+        # A rejected agenda contributes every expected item as a miss; it must
+        # not abort the run or be silently omitted from the denominator.
+        parsed = []
+        parse_error = str(error)
     extracted = [(i.item_number, i.title) for i in parsed]
     scores = parser_precision_recall(expected, extracted)
 
@@ -46,6 +52,7 @@ def evaluate_agenda(expected_path: Path) -> Dict[str, Any]:
     return {
         "agenda": expected_path.name.replace(".expected.json", ""),
         "labeled_by": spec.get("labeled_by", ""),
+        "parse_error": parse_error,
         **scores,
         "missed": sorted(" ".join(k) for k in expected_keys - extracted_keys),
         "extra": sorted(" ".join(k) for k in extracted_keys - expected_keys),
@@ -96,6 +103,8 @@ def main() -> int:
         for r in result["agendas"]:
             print(f"{r['agenda']:<34} {r['expected']:>8} {r['extracted']:>7} "
                   f"{r['precision']:>10.0%} {r['recall']:>7.0%}")
+            if r["parse_error"]:
+                print(f"    parser error: {r['parse_error']}")
             for m in r["missed"]:
                 print(f"    missed: {m}")
             for e in r["extra"]:

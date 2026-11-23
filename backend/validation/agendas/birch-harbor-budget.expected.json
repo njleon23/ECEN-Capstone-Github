@@ -1,0 +1,31 @@
+{
+  "file": "birch-harbor-budget.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Colon-separated item numbers and nested budget subitems.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Opening Remarks"
+    },
+    {
+      "item_number": "2",
+      "title": "Public Hearing on the Proposed Budget"
+    },
+    {
+      "item_number": "2.1",
+      "title": "General Fund Transfer"
+    },
+    {
+      "item_number": "2.2",
+      "title": "Utility Fund Rate Schedule"
+    },
+    {
+      "item_number": "3",
+      "title": "Council Direction"
+    },
+    {
+      "item_number": "4",
+      "title": "Adjournment"
+    }
+  ]
+}
