@@ -1,0 +1,23 @@
+{
+  "file": "dry-creek-work-session.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "ASCII dash separators and uppercase ITEM labels.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Roll Call"
+    },
+    {
+      "item_number": "2",
+      "title": "Presentation of the Pavement Survey"
+    },
+    {
+      "item_number": "3",
+      "title": "Funding Options for the Capital Plan"
+    },
+    {
+      "item_number": "4",
+      "title": "Adjournment"
+    }
+  ]
+}

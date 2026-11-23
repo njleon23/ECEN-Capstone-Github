@@ -1,11 +1,15 @@
+from io import BytesIO
 from pathlib import Path
 
-from api_helpers import api  # noqa: F401
+import pytest
+from pypdf import PdfWriter
+from api_helpers import api, upload_agenda  # noqa: F401
 from app.services.agenda_repository import get_agenda
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import main as main_module
+from app.routers import agendas
 
 SAMPLE_AGENDA = (
     Path(__file__).resolve().parents[2]
@@ -79,6 +83,73 @@ def test_reject_unsupported_file(api):
 
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "status", "code"),
+    [
+        ("broken.pdf", b"not a PDF", 400, "INVALID_REQUEST"),
+        ("empty.md", b"", 400, "INVALID_REQUEST"),
+    ],
+)
+def test_invalid_upload_does_not_change_agendas(api, name, content, status, code):
+    upload_agenda(api)
+    before = api.get("/api/v1/agendas").json()
+    response = api.post("/api/v1/agendas", files={"file": (name, content)})
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    assert api.get("/api/v1/agendas").json() == before
+
+
+def test_pdf_without_searchable_text_requests_ocr(api):
+    pdf = PdfWriter()
+    pdf.add_blank_page(width=612, height=792)
+    buffer = BytesIO()
+    pdf.write(buffer)
+
+    response = api.post(
+        "/api/v1/agendas",
+        files={"file": ("no-text.pdf", buffer.getvalue(), "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "OCR_REQUIRED"
+    assert api.get("/api/v1/agendas").json() == []
+
+
+def test_agenda_upload_size_boundary(api, monkeypatch):
+    content = b"1. Call to Order\n"
+    monkeypatch.setattr(agendas, "MAX_FILE_SIZE", len(content))
+    accepted = api.post("/api/v1/agendas", files={"file": ("agenda.txt", content)})
+    assert accepted.status_code == 201
+    before = api.get("/api/v1/agendas").json()
+
+    rejected = api.post("/api/v1/agendas", files={"file": ("agenda.txt", content + b" ")})
+    assert rejected.status_code == 413
+    assert rejected.json()["error"]["code"] == "FILE_TOO_LARGE"
+    assert api.get("/api/v1/agendas").json() == before
+
+
+def test_markdown_upload_preserves_50_numbered_items(api):
+    content = "\n\n".join(
+        f"## Item {number}: Council business {number}\n\nStaff discussion."
+        for number in range(1, 51)
+    ).encode("utf-8-sig")
+    response = api.post(
+        "/api/v1/agendas",
+        files={"file": ("work-session.md", content, "text/markdown")},
+    )
+
+    assert response.status_code == 201
+    uploaded = response.json()
+    stored = api.get(f"/api/v1/agendas/{uploaded['agenda_id']}").json()
+    assert stored["items"] == uploaded["items"]
+    assert [item["item_number"] for item in stored["items"]] == [
+        str(number) for number in range(1, 51)
+    ]
+    assert stored["items"][0]["title"] == "Council business 1"
+    assert "Staff discussion." in stored["items"][0]["source_text"]
+    assert all(item["agenda_id"] == stored["agenda_id"] for item in stored["items"])
 
 
 def test_list_agendas(api):

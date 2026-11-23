@@ -75,9 +75,14 @@ async def upload_agenda(
             "Convert the file to PDF, TXT, or Markdown and upload it again.",
         )
 
-    content = await file.read()
+    # Reject oversized multipart uploads without reading the whole spooled file
+    # into memory. Keep a bounded read for uploads with no known size.
+    content = (
+        None if file.size is not None and file.size > MAX_FILE_SIZE
+        else await file.read(MAX_FILE_SIZE + 1)
+    )
 
-    if len(content) > MAX_FILE_SIZE:
+    if content is None or len(content) > MAX_FILE_SIZE:
         return error_response(
             413,
             "FILE_TOO_LARGE",

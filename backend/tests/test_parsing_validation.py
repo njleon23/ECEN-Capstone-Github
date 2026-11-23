@@ -8,7 +8,7 @@ from validation.validate_parsing import evaluate_agenda, evaluate_all, AGENDA_DI
 def test_saved_agendas_match_their_hand_written_keys():
     result = evaluate_all()
 
-    assert result["agendas_evaluated"] >= 2
+    assert result["agendas_evaluated"] >= result["agendas_required"]
     assert result["precision"] == 1.0
     assert result["recall"] == 1.0
     for row in result["agendas"]:
@@ -52,7 +52,27 @@ def test_harness_reports_a_missed_and_an_extra_item(tmp_path):
 
 
 def test_every_saved_agenda_has_a_key_file():
-    agendas = {p.stem for p in AGENDA_DIR.glob("*.txt")}
+    agendas = {p.stem for p in AGENDA_DIR.iterdir() if p.suffix in {".txt", ".md", ".pdf"}}
     keys = {p.name.replace(".expected.json", "") for p in AGENDA_DIR.glob("*.expected.json")}
 
     assert agendas <= keys
+
+
+def test_unparseable_agenda_counts_against_recall(tmp_path):
+    (tmp_path / "unparseable.txt").write_text("Unnumbered heading", encoding="utf-8")
+    (tmp_path / "unparseable.expected.json").write_text(
+        json.dumps({
+            "file": "unparseable.txt",
+            "items": [{"item_number": "1", "title": "Call to Order"}],
+        }),
+        encoding="utf-8",
+    )
+
+    result = evaluate_all(tmp_path)
+    assert result["agendas_evaluated"] == 1
+    assert result["items_expected"] == 1
+    assert result["items_extracted"] == 0
+    assert result["recall"] == 0
+    assert result["status"] == "Partial"
+    assert result["agendas"][0]["missed"] == ["1 call to order"]
+    assert result["agendas"][0]["parse_error"]

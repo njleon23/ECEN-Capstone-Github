@@ -1,0 +1,27 @@
+{
+  "file": "elm-ridge-regular.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "En and em dashes typical of exported documents.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order"
+    },
+    {
+      "item_number": "2",
+      "title": "Approval of Minutes"
+    },
+    {
+      "item_number": "3",
+      "title": "Equipment Replacement Schedule"
+    },
+    {
+      "item_number": "4",
+      "title": "Public Comment"
+    },
+    {
+      "item_number": "5",
+      "title": "Adjournment"
+    }
+  ]
+}

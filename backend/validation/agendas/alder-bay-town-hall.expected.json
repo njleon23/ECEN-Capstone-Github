@@ -1,0 +1,23 @@
+{
+  "file": "alder-bay-town-hall.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Plain numbering, tab separators, and multi-paragraph item text.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order"
+    },
+    {
+      "item_number": "2",
+      "title": "Public Comment"
+    },
+    {
+      "item_number": "3",
+      "title": "Review of the Ferry Landing Lease"
+    },
+    {
+      "item_number": "4",
+      "title": "Adjournment"
+    }
+  ]
+}

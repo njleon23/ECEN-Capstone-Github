@@ -1,0 +1,27 @@
+{
+  "file": "hemlock-point-committee.txt",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Mixed conventional numbering with nested subitems and literal decimal values in prose.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Opening and Attendance"
+    },
+    {
+      "item_number": "2",
+      "title": "Project Updates"
+    },
+    {
+      "item_number": "2.1",
+      "title": "Trail Connection Design"
+    },
+    {
+      "item_number": "2.2",
+      "title": "Bus Shelter Grant"
+    },
+    {
+      "item_number": "3",
+      "title": "Next Meeting and Adjournment"
+    }
+  ]
+}

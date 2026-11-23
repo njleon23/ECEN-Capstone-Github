@@ -1,0 +1,27 @@
+{
+  "file": "fox-meadow-utilities.md",
+  "labeled_by": "Assistant-authored answer key from fixture text, not parser output; team review pending.",
+  "note": "Markdown headings at multiple levels with numbered utility subitems.",
+  "items": [
+    {
+      "item_number": "1",
+      "title": "Call to Order"
+    },
+    {
+      "item_number": "2",
+      "title": "Operations Update"
+    },
+    {
+      "item_number": "2.1",
+      "title": "Pump Station Inspection"
+    },
+    {
+      "item_number": "2.2",
+      "title": "Water Meter Replacement"
+    },
+    {
+      "item_number": "3",
+      "title": "Adjournment"
+    }
+  ]
+}
