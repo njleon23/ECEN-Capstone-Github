@@ -50,6 +50,10 @@ export interface AgendaItem {
   likelyQuestions: string[]
   talkingPoints: string[]
   missingInformation: string[]
+  /** The meeting this item belongs to, as the backend parsed it from the agenda. */
+  agendaId?: string
+  meetingTitle?: string | null
+  meetingDate?: string | null
 }
 
 export interface SourceRecord {
@@ -113,8 +117,14 @@ async function requireSuccessfulResponse(
   throw new ApiError(await readErrorMessage(response, fallbackMessage), response.status)
 }
 
-function mapAgendaItem(item: BackendAgendaItem): AgendaItem {
+// Converts one agenda item from the backend's format (snake_case names) into the shape the screens use.
+// `agenda` is the agenda the item came from; its meeting title and date are copied onto every item so the
+// header can show the right meeting for whichever item is open.
+function mapAgendaItem(item: BackendAgendaItem, agenda?: BackendAgendaResponse): AgendaItem {
   return {
+    agendaId: item.agenda_id,
+    meetingTitle: agenda?.meeting_title ?? null,
+    meetingDate: agenda?.meeting_date ?? null,
     id: item.item_id,
     number: item.item_number,
     title: item.title,
@@ -190,7 +200,7 @@ export async function fetchAgendas(): Promise<AgendaItem[]> {
     (await response.json()) as BackendAgendaResponse[]
 
   return agendas.flatMap((agenda) =>
-    agenda.items.map(mapAgendaItem),
+    agenda.items.map((item) => mapAgendaItem(item, agenda)),
   )
 }
 
@@ -218,7 +228,20 @@ export async function uploadAgendaPdf(
   const agenda =
     (await response.json()) as BackendAgendaResponse
 
-  return agenda.items.map(mapAgendaItem)
+  return agenda.items.map((item) => mapAgendaItem(item, agenda))
+}
+
+/**
+ * Turns the backend's meeting date into readable text: "2026-08-27" -> "August 27, 2026".
+ * Returns null when the agenda had no date, so the header can say "Meeting date not listed" instead.
+ * The date is split by hand (not new Date("2026-08-27")) because that form is read as UTC midnight and
+ * can show the previous day in US time zones.
+ */
+export function formatMeetingDate(dateText: string | null | undefined): string | null {
+  if (!dateText) return null
+  const [year, month, day] = dateText.slice(0, 10).split("-").map(Number)
+  if (!year || !month || !day) return dateText
+  return new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" }).format(new Date(year, month - 1, day))
 }
 
 export async function fetchSources(): Promise<SourceRecord[]> {

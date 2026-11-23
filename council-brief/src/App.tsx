@@ -1,5 +1,27 @@
+// App.tsx
+//
+// The main screen of the Council Brief website. It holds all of the page's data ("state") and lays out:
+//   - the left sidebar (navigation + backend connection status)
+//   - the top header (meeting name/date + Sign in, Add source, Analyze, Upload buttons)
+//   - three views: Meeting workspace, Source library, Evaluation
+//   - the pop-up dialogs (sign in, upload agenda, add source)
+//
+// Talking to the backend happens in other files:
+//   api.ts          -> agendas, sources, error handling
+//   analysisApi.ts  -> running analyses, follow-up questions, reviews, adjustments
+// Pieces of the screen that live in their own files:
+//   BriefingParts.tsx  -> Key facts / Concerns / Likely questions / Talking points lists
+//   EvaluationView.tsx -> the Evaluation page
+//   FollowUpBox.tsx    -> "Ask a follow-up question"
+//   ReviewPanels.tsx   -> review history, factor adjuster, attach-source picker (Quan's Package 2)
+
+// ---- Imports ------------------------------------------------------------------------------------
+
+// React hooks: useState stores data, useEffect runs code when something changes, useMemo caches a calculation.
 import { useMemo, useState, useEffect } from "react"
+// URL of the PDF.js worker script, used to read text out of uploaded PDF sources.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"
+// Icons (lucide-react icon library).
 import {
   AlertTriangle,
   BarChart3,
@@ -23,12 +45,15 @@ import {
   Plus,
   Printer,
   Search,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Upload,
 } from "lucide-react"
+// toast() shows the small pop-up messages in the top-right corner ("Analysis complete", errors...).
 import { toast } from "sonner"
 
+// Reusable UI building blocks (buttons, inputs, dialogs, tabs...) from src/components/ui.
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -45,7 +70,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
 
-import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, API_BASE_URL, ApiError, readErrorMessage } from "./api"
+// Our own frontend files (see the list at the top of this file).
+import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, formatMeetingDate, API_BASE_URL, ApiError, readErrorMessage } from "./api"
+import { ClaimList, QuestionList } from "./BriefingParts"
+import { EvaluationView } from "./EvaluationView"
 import { AgendaItem, SourceRecord } from "./api"
 import {
   analyzeItem, attachSource, categoryLabel, detachSource, listAdjustments, listAttachedSourceIds, restoreSavedItem,
@@ -57,7 +85,26 @@ import { appendFor, commentKey, factorControlKey, removeKey, setFor } from "./it
 import type { ByItem } from "./itemScoped"
 import { AdjustmentHistory, AttachPicker, FactorAdjuster, ReviewHistory } from "./ReviewPanels"
 
+// ---- Types and settings used by the screen -------------------------------------------------------
+
+// Which page is showing (chosen in the left sidebar).
 type View = "meeting" | "sources" | "evaluation"
+// How the agenda item list is ordered: as on the agenda, or highest priority first.
+type SortOrder = "agenda" | "priority"
+// Which filter button is selected above the agenda item list.
+type ItemFilter = "all" | "not-analyzed" | "needs-review" | "approved"
+
+// Used when sorting by priority: lower number = shown higher. Unscored items get 3 (shown last).
+const PRIORITY_RANK: Record<string, number> = { High: 0, Moderate: 1, Low: 2 }
+
+// The filter buttons above the agenda item list. Each has an id, the button text, and a
+// `matches` function that decides whether an item is shown while that filter is selected.
+const ITEM_FILTERS: Array<{ id: ItemFilter; label: string; matches: (item: any) => boolean }> = [
+  { id: "all", label: "All", matches: () => true },
+  { id: "not-analyzed", label: "Not analyzed", matches: (item) => !item.analysisState || item.analysisState === "idle" },
+  { id: "needs-review", label: "Needs review", matches: (item) => item.reviewStatus !== "Approved" },
+  { id: "approved", label: "Approved", matches: (item) => item.reviewStatus === "Approved" },
+]
 
 /**
  * Adds the saved analysis, briefing and review status to each item, so results are still there after a refresh.
@@ -73,6 +120,9 @@ async function hydrate(list: AgendaItem[]): Promise<any[]> {
   })
 }
 
+// ---- Small helpers ----------------------------------------------------------------------------------
+
+// Badge colors for a priority category: High = red, Moderate = amber, Low = green, anything else = gray.
 function priorityStyle(priority: string | null) {
   if (priority === "High") return "border-rose-200 bg-rose-50 text-rose-700"
   if (priority === "Moderate") return "border-amber-200 bg-amber-50 text-amber-700"
@@ -80,12 +130,15 @@ function priorityStyle(priority: string | null) {
   return "border-slate-200 bg-slate-50 text-slate-600"
 }
 
+// Badge colors for a review status: Approved = green, Needs review = blue.
 function statusStyle(status: AgendaItem["reviewStatus"]) {
   if (status === "Approved") return "border-emerald-200 bg-emerald-50 text-emerald-700"
   if (status === "Needs review") return "border-sky-200 bg-sky-50 text-sky-700"
   return "border-slate-200 bg-slate-50 text-slate-600"
 }
 
+// Reads the text out of an uploaded source file in the browser. PDFs are read page by page with PDF.js;
+// .txt/.md files are read directly. Used by "Add source" to save a text excerpt with the source.
 async function extractFileText(file: File) {
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs")
@@ -107,6 +160,7 @@ async function extractFileText(file: File) {
   return file.text()
 }
 
+// Dashed gray box used for "nothing here yet" messages.
 function EmptySection({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
@@ -115,37 +169,53 @@ function EmptySection({ children }: { children: React.ReactNode }) {
   )
 }
 
+// ==================================================================================================
+// The App component: everything below is the main screen.
+// ==================================================================================================
 export default function App() {
-  const [items, setItems] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [sources, setSources] = useState<SourceRecord[]>([])
-  const [selectedId, setSelectedId] = useState<string>("")
-  const [view, setView] = useState<View>("meeting")
-  const [briefTab, setBriefTab] = useState("briefing")
-  const [query, setQuery] = useState("")
-  
-  const [token, setToken] = useState<string | null>(null)
-  const [loginOpen, setLoginOpen] = useState(false)
-  const [loginUser, setLoginUser] = useState("")
-  const [loginPass, setLoginPass] = useState("")
-  const [loginLoading, setLoginLoading] = useState(false)
+  // ---- State: the data this screen remembers. Calling a set...() function updates it and redraws the page. ----
 
-  const [uploadOpen, setUploadOpen] = useState(false)
-  const [sourceOpen, setSourceOpen] = useState(false)
-  const [processing, setProcessing] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
+  // Data loaded from the backend.
+  const [items, setItems] = useState<any[]>([])                       // every agenda item (plus analysis results)
+  const [isLoading, setIsLoading] = useState(true)                    // true while the first load is running
+  const [error, setError] = useState<string | null>(null)             // set when the backend can't be reached
+  const [sources, setSources] = useState<SourceRecord[]>([])          // every source in the Source Library
+
+  // What the user is currently looking at.
+  const [selectedId, setSelectedId] = useState<string>("")            // id of the agenda item that is open
+  const [view, setView] = useState<View>("meeting")                   // which sidebar page is showing
+  const [briefTab, setBriefTab] = useState("briefing")                // Briefing / Priority factors / Evidence tab
+  const [query, setQuery] = useState("")                              // text typed in "Search agenda items"
+  const [sortOrder, setSortOrder] = useState<SortOrder>("agenda")     // the sort dropdown above the item list
+  const [itemFilter, setItemFilter] = useState<ItemFilter>("all")     // the filter buttons above the item list
+
+  // Sign-in. The token is the proof of sign-in sent with every protected request. It is kept only in
+  // memory (not saved in the browser), so refreshing the page signs the user out.
+  const [token, setToken] = useState<string | null>(null)
+  const [loginOpen, setLoginOpen] = useState(false)                   // is the Sign in dialog open?
+  const [loginUser, setLoginUser] = useState("")                      // username typed in the dialog
+  const [loginPass, setLoginPass] = useState("")                      // password typed in the dialog
+  const [loginLoading, setLoginLoading] = useState(false)             // true while signing in
+
+  // Dialogs and busy indicators.
+  const [uploadOpen, setUploadOpen] = useState(false)                 // is the Upload agenda dialog open?
+  const [sourceOpen, setSourceOpen] = useState(false)                 // is the Add source dialog open?
+  const [processing, setProcessing] = useState(false)                 // true while uploading an agenda or source
+  const [analyzing, setAnalyzing] = useState(false)                   // true while "Analyze this item" runs
   // Unsaved comments, loaded histories and in-flight saves are all kept per item, so switching items while
   // something is still saving or loading can never show or submit one item's data under another.
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, string>>({})
   const [reviewsByItem, setReviewsByItem] = useState<ByItem<ReviewRecord[]>>({})
   const [adjustmentsByItem, setAdjustmentsByItem] = useState<ByItem<AdjustmentRecord[]>>({})
   const [savingReviewFor, setSavingReviewFor] = useState<string[]>([])
+  // What the user has typed or chosen in the Upload agenda / Add source dialogs.
   const [agendaFile, setAgendaFile] = useState<File | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
 
+  // ---- First load: when the page opens, fetch agendas and sources from the backend ----
+  // The empty [] at the end means "run once, when the page first appears".
   useEffect(() => {
     async function loadBackendData() {
       setIsLoading(true)
@@ -170,6 +240,11 @@ export default function App() {
     loadBackendData()
   }, [])
 
+  // ---- Sign-in, sign-out and error handling ----------------------------------------------------------
+
+  // Shared error handler for actions that need sign-in.
+  // 401 = session expired -> sign out and reopen the Sign in dialog. 429 = too many requests -> ask to wait.
+  // Anything else -> show the error message as a red toast.
   const handleProtectedActionError = (error: unknown, fallbackMsg: string) => {
     if (error instanceof ApiError && error.status === 401) {
       setToken(null)
@@ -184,6 +259,8 @@ export default function App() {
     toast.error(error instanceof Error ? error.message : fallbackMsg)
   }
 
+  // Runs when the Sign in form is submitted: sends the username and password to the backend
+  // and keeps the returned access token.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoginLoading(true)
@@ -216,6 +293,7 @@ export default function App() {
     }
   }
 
+  // Signs out: tells the backend to end the session, then forgets the token either way.
   const handleLogout = async () => {
     if (token) {
       try {
@@ -244,6 +322,7 @@ export default function App() {
     toast.success("Logged out successfully.")
   }
 
+  // Called at the start of every protected action. If not signed in, opens the Sign in dialog and returns false.
   const checkAuth = () => {
     if (!token) {
       setLoginOpen(true)
@@ -253,11 +332,16 @@ export default function App() {
     return true
   }
 
+  // ---- Values worked out from the state (recalculated every time the page redraws) --------------------
+
+  // The open agenda item (falls back to the first item), and its attached / not-attached sources.
   const selected = items.find((item) => item.id === selectedId) ?? items[0]
   const selectedSources = sources.filter((source) => selected?.sourceIds?.includes(source.id))
   const unattachedSources = sources.filter((source) => !selected?.sourceIds?.includes(source.id))
+  // "Real" items come from the backend; ids starting with "mock" are local demo data that can't be saved.
   const isReal = Boolean(selected) && !String(selected.id).startsWith("mock")
-  const reviews = (selected && reviewsByItem[selected.id]) || []
+  // Review history, adjustment history and the unsaved reviewer comment for the open item.
+  const reviews =(selected && reviewsByItem[selected.id]) || []
   const adjustments = (selected && adjustmentsByItem[selected.id]) || []
   const reviewKey = selected ? commentKey(selected.id, selected.briefingId) : ""
   const reviewComment = reviewDrafts[reviewKey] ?? ""
@@ -282,14 +366,35 @@ export default function App() {
     return () => { cancelled = true }
   }, [selectedId])
 
+  // The agenda items shown in the left list after applying the search box, the filter buttons and the sort
+  // dropdown. useMemo only recalculates this when one of the values in the [...] list at the end changes.
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    if (!normalized) return items
-    return items.filter((item) =>
-      `${item.number} ${item.title} ${item.department}`.toLowerCase().includes(normalized),
+    // The `matches` function of the selected filter button (see ITEM_FILTERS near the top of the file).
+    const matchesFilter = ITEM_FILTERS.find((f) => f.id === itemFilter)?.matches ?? (() => true)
+    // Keep items that pass the filter AND contain the search text (if any) in their number, title or department.
+    const visible = items.filter((item) =>
+      matchesFilter(item) &&
+      (!normalized || `${item.number} ${item.title} ${item.department}`.toLowerCase().includes(normalized)),
     )
-  }, [items, query])
+    if (sortOrder === "agenda") return visible
+    // Highest priority first (High, Moderate, Low, then unscored); within the same category, higher score first.
+    // Items that are still tied keep their agenda order (Array.sort is stable).
+    return [...visible].sort((a, b) =>
+      (PRIORITY_RANK[a.category] ?? 3) - (PRIORITY_RANK[b.category] ?? 3) || (b.score ?? -1) - (a.score ?? -1),
+    )
+  }, [items, query, itemFilter, sortOrder])
 
+  // The header shows the meeting of the item being viewed, as parsed from its agenda by the backend.
+  // If the agenda had no title, it falls back to "College Station City Council".
+  // meetingDate is null when the agenda had no date; the header then says so instead of showing a wrong date.
+  const meetingItem = selected ?? items[0]
+  const meetingTitle = meetingItem?.meetingTitle || "College Station City Council"
+  const meetingDate = formatMeetingDate(meetingItem?.meetingDate)
+
+  // ---- Actions (run when the user clicks a button) ---------------------------------------------------
+
+  // Changes some fields of one agenda item in the list, for example its review status.
   const updateItem = (itemId: string, update: Partial<any>) => {
     setItems((current) =>
       current.map((item) => (item.id === itemId ? { ...item, ...update } : item)),
@@ -298,6 +403,8 @@ export default function App() {
 
   const updateSelected = (update: Partial<any>) => updateItem(selected.id, update)
 
+  // "Analyze this item": asks the backend to score and brief the open item, waits for the result,
+  // then reloads the item's saved review history and adjustments.
   const runAnalysisForSelected = async () => {
     if (!checkAuth()) return;
     if (!selected || analyzing) return
@@ -321,6 +428,7 @@ export default function App() {
     }
   }
 
+  // "Approve source" / "Withdraw approval": only approved sources are used by the analysis.
   const toggleApproval = async (source: SourceRecord) => {
     if (!checkAuth()) return;
     const next = !source.approved
@@ -333,6 +441,7 @@ export default function App() {
     }
   }
 
+  // Evidence tab: link an existing source to the open item (saved on the backend).
   const attachToSelected = async (source: SourceRecord) => {
     if (!selected || !checkAuth()) return
     try {
@@ -344,6 +453,7 @@ export default function App() {
     }
   }
 
+  // Evidence tab: "Detach from this item" (the source stays in the library).
   const detachFromSelected = async (source: SourceRecord) => {
     if (!selected || !checkAuth()) return
     try {
@@ -355,6 +465,8 @@ export default function App() {
     }
   }
 
+  // "Approve Briefing" / "Reject / Flag": saves the decision and the reviewer comment on the backend
+  // under the signed-in account, then adds it to the review history.
   const submitReview = async (status: "approved" | "rejected") => {
     if (!checkAuth()) return
     if (!selected?.briefingId) {
@@ -381,6 +493,8 @@ export default function App() {
     }
   }
 
+  // Priority factors tab: saves a reviewer's change to one factor (a reason is required), then reloads
+  // the item's score and adjustment history from the backend.
   const submitAdjustment = async (itemId: string, factorKey: string, newRawValue: number, reason: string) => {
     if (!checkAuth()) throw new Error("Sign in to adjust a factor.")
     try {
@@ -397,6 +511,8 @@ export default function App() {
     }
   }
 
+  // Upload agenda dialog: sends the file to the backend, which splits it into agenda items,
+  // then reloads the full item list.
   const processAgenda = async () => {
     if (!checkAuth()) return;
     if (!agendaFile) {
@@ -423,6 +539,8 @@ export default function App() {
     }
   }
 
+  // Add source dialog: reads the file's text (first 500 characters become the excerpt), saves the source on
+  // the backend, and attaches it to the open item. New sources start as "Not approved".
   const addSource = async () => {
     if (!checkAuth()) return;
     if (!sourceFile && !sourceTitle.trim()) {
@@ -468,10 +586,11 @@ export default function App() {
     }
   }
 
+  // "Export" button: downloads the open item's briefing, priority and sources as a .json file.
   const downloadBriefing = () => {
     if (!selected) return
     const payload = {
-      meeting: "College Station City Council — August 27, 2026",
+      meeting: [meetingTitle, meetingDate].filter(Boolean).join(" — "),
       agendaItem: selected,
       preparationPriority: { score: selected.score, category: selected.category },
       sources: selectedSources,
@@ -487,10 +606,16 @@ export default function App() {
     toast.success("Briefing downloaded.")
   }
 
+  // ==================================================================================================
+  // What appears on the screen. Everything below is JSX (HTML-like markup); {curly braces} insert JavaScript.
+  // `className` values are Tailwind CSS classes that set layout, spacing and colors.
+  // ==================================================================================================
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-950">
+      {/* Where toast pop-up messages appear. */}
       <Toaster position="top-right" richColors />
 
+      {/* ===== LEFT SIDEBAR (only on large screens; hidden when printing) ===== */}
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] flex-col bg-[#0b1f33] text-white lg:flex print:hidden">
         <div className="flex h-20 items-center gap-3 border-b border-white/10 px-6">
           <div className="grid size-10 place-items-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-950/30">
@@ -502,6 +627,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Navigation: one button per page. Clicking sets `view`, which decides what <main> shows below. */}
         <nav className="space-y-1 px-3 py-5" aria-label="Primary navigation">
           {[
             { id: "meeting" as const, label: "Meeting workspace", icon: LayoutDashboard },
@@ -522,19 +648,38 @@ export default function App() {
         </nav>
 
         <div className="mt-auto border-t border-white/10 p-5">
-          <div className="rounded-xl bg-white/8 p-4">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">
-              <ShieldCheck className="size-4" />
-              FastAPI Connected
-            </div>
-            <p className="text-sm leading-5 text-slate-300">
-              Connected to backend API.
-            </p>
+          {/* Backend connection status. Three states: still loading -> "Connecting…",
+              load failed -> "Backend offline", load worked -> "Backend connected" with item and source counts.
+              role="status" lets screen readers announce changes. */}
+          <div className="rounded-xl bg-white/8 p-4" role="status">
+            {isLoading ? (
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">
+                <Loader2 className="size-4 animate-spin" /> Connecting…
+              </div>
+            ) : error ? (
+              <>
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-rose-300">
+                  <ShieldAlert className="size-4" /> Backend offline
+                </div>
+                <p className="text-sm leading-5 text-slate-300">The backend could not be reached. Start it, then refresh.</p>
+              </>
+            ) : (
+              <>
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">
+                  <ShieldCheck className="size-4" /> Backend connected
+                </div>
+                <p className="text-sm leading-5 text-slate-300">
+                  {items.length} agenda item{items.length === 1 ? "" : "s"} · {sources.length} source{sources.length === 1 ? "" : "s"}
+                </p>
+              </>
+            )}
           </div>
         </div>
       </aside>
 
+      {/* Everything to the right of the sidebar. */}
       <div className="lg:pl-[248px]">
+        {/* ===== TOP HEADER: meeting name and date on the left, action buttons on the right ===== */}
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur print:static">
           <div className="flex min-h-20 items-center justify-between gap-4 px-4 py-3 sm:px-7 xl:px-10">
             <div className="min-w-0">
@@ -542,11 +687,14 @@ export default function App() {
                 <Landmark className="size-4 text-blue-600" />
                 <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Council Brief</span>
               </div>
+              {/* Meeting title and date come from the uploaded agenda (see meetingTitle / meetingDate above). */}
               <h2 className="truncate text-lg font-semibold tracking-tight sm:text-xl">
-                College Station City Council
+                {meetingTitle}
               </h2>
-              <p className="text-sm text-slate-500">August 27, 2026 · FastAPI Live Integration</p>
+              <p className="text-sm text-slate-500">{meetingDate ?? (items.length ? "Meeting date not listed on the agenda" : "No agenda loaded")}</p>
             </div>
+            {/* Header buttons. "Sign in" turns into "Sign out" once a token exists. Add source and Upload
+                agenda first check sign-in (checkAuth) and open their dialog only if signed in. */}
             <div className="flex shrink-0 items-center gap-2 print:hidden">
               {token ? (
                 <Button variant="ghost" onClick={handleLogout} className="hidden sm:inline-flex text-slate-600">
@@ -571,10 +719,14 @@ export default function App() {
           </div>
         </header>
 
+        {/* ===== MAIN AREA: shows one of the three pages depending on `view` ===== */}
         <main className="px-4 py-6 sm:px-7 xl:px-10">
+          {/* ===== PAGE 1: MEETING WORKSPACE — item list on the left, the open item's briefing on the right ===== */}
           {view === "meeting" && (
             <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+              {/* ----- Left column: summary counts, search, filters and the agenda item list ----- */}
               <section className="print:hidden">
+                {/* Three small count cards above the list. */}
                 <div className="mb-4 grid grid-cols-3 gap-2">
                   {[
                     { label: "Agenda items", value: items.length },
@@ -600,9 +752,41 @@ export default function App() {
                         className="pl-9"
                       />
                     </div>
+                    {/* Filter buttons (All / Not analyzed / Needs review / Approved) and the sort dropdown.
+                        aria-pressed tells screen readers which filter is on. */}
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-1" role="group" aria-label="Filter agenda items">
+                        {ITEM_FILTERS.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => setItemFilter(f.id)}
+                            aria-pressed={itemFilter === f.id}
+                            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+                              itemFilter === f.id
+                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                      <select
+                        value={sortOrder}
+                        onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+                        aria-label="Sort agenda items"
+                        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                      >
+                        <option value="agenda">Agenda order</option>
+                        <option value="priority">Highest priority first</option>
+                      </select>
+                    </div>
                   </div>
+                  {/* The scrollable item list. Only one of these messages shows at a time:
+                      loading, connection failed, no agendas, nothing matches the filter, or the list itself. */}
                   <div className="max-h-[calc(100vh-260px)] overflow-y-auto p-2">
-                    
+
                     {isLoading && (
                       <div className="flex flex-col items-center justify-center p-10 text-slate-500">
                         <Loader2 className="mb-3 size-6 animate-spin text-blue-600" />
@@ -625,6 +809,11 @@ export default function App() {
                       </div>
                     )}
 
+                    {!isLoading && !error && items.length > 0 && filteredItems.length === 0 && (
+                      <p className="p-6 text-center text-sm text-slate-500">No agenda items match this search or filter.</p>
+                    )}
+
+                    {/* One clickable card per agenda item. Clicking opens it on the right. */}
                     {!isLoading && !error && filteredItems.map((item) => {
                       const active = selected && item.id === selected.id
                       const displayScore = scoreLabel(item)
@@ -655,9 +844,11 @@ export default function App() {
                 </div>
               </section>
 
+              {/* ----- Right column: the open agenda item ----- */}
               <section className="min-w-0">
                 {selected && !error && !isLoading ? (
                   <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    {/* Item heading: number, review status, title, and the colored preparation-priority box. */}
                     <div className="border-b border-slate-100 p-5 sm:p-6">
                       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
@@ -682,6 +873,7 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Three tabs: Briefing, Priority factors, Evidence. `briefTab` remembers which is open. */}
                     <Tabs value={briefTab} onValueChange={setBriefTab} className="gap-0">
                       <div className="overflow-x-auto border-b border-slate-100 px-5 sm:px-6 print:hidden">
                         <TabsList variant="line" className="h-12 gap-5">
@@ -691,7 +883,10 @@ export default function App() {
                         </TabsList>
                       </div>
 
+                      {/* ===== TAB 1: BRIEFING ===== */}
                       <TabsContent value="briefing" className="p-5 sm:p-6">
+                        {/* Summary box. The label says which writer produced it (rule-based stand-in or AI model).
+                            The text can be edited here, but edits are not saved to the backend. */}
                         <div className="mb-6 rounded-xl border-l-4 border-blue-600 bg-blue-50/70 p-4">
                           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-900">
                             <Sparkles className="size-4" /> {writerLabel(selected.modelId)}
@@ -704,21 +899,17 @@ export default function App() {
                           />
                         </div>
 
+                        {/* The four briefing sections in a 2x2 grid (one column on small screens).
+                            These components are in BriefingParts.tsx. */}
                         <div className="grid gap-6 lg:grid-cols-2">
-                          <BriefingList title="Key facts" icon={CheckCircle2} items={selected.key_facts} />
-                          
-                          <EditableList
-                            title="Likely questions"
-                            icon={FileSearch}
-                            items={selected.anticipated_questions?.map((q: any) => q.text)}
-                            onChange={(updatedTextArray) => {
-                              const updatedQuestions = updatedTextArray.map((text) => ({ text, support_level: "Moderate", citations: [] }))
-                              updateSelected({ anticipated_questions: updatedQuestions })
-                            }}
-                          />
-                          <BriefingList title="Suggested talking points" icon={ListChecks} items={selected.talking_points} />
+                          <ClaimList title="Key facts" icon={CheckCircle2} items={selected.key_facts} />
+                          <ClaimList title="Concerns to check" icon={ShieldAlert} items={selected.concerns} empty="No concerns were raised from the approved sources." />
+                          <QuestionList title="Likely questions" icon={FileSearch} items={selected.anticipated_questions} />
+                          <ClaimList title="Suggested talking points" icon={ListChecks} items={selected.talking_points} />
                         </div>
 
+                        {/* Yellow "Verification needed" box: warnings from the analysis (weak evidence, which writer
+                            was used, errors...). The list is built in analysisApi.ts (jobToFields). */}
                         <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
                           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
                             <AlertTriangle className="size-4" /> Verification needed
@@ -728,8 +919,11 @@ export default function App() {
                           </ul>
                         </div>
 
+                        {/* "Ask a follow-up question" (FollowUpBox.tsx). key={selected.id} gives each item a fresh box,
+                            so one item's questions never show under another. */}
                         {!String(selected.id).startsWith("mock") && <div className="mt-6"><FollowUpBox key={selected.id} itemId={selected.id} token={token} onApiError={handleProtectedActionError} /></div>}
 
+                        {/* Staff Review & Sign-off: reviewer comment, Print/Export, Reject/Approve, and the review history. */}
                         <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 print:hidden">
                           <h3 className="mb-4 text-sm font-semibold text-slate-900">Staff Review & Sign-off</h3>
                           
@@ -787,6 +981,8 @@ export default function App() {
                         </div>
                       </TabsContent>
 
+                      {/* ===== TAB 2: PRIORITY FACTORS — the score breakdown, the factor adjuster and adjustment history
+                          (FactorAdjuster and AdjustmentHistory are in ReviewPanels.tsx) ===== */}
                       <TabsContent value="priority" className="p-5 sm:p-6">
                         <div className="mb-6 flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                           <div>
@@ -825,6 +1021,7 @@ export default function App() {
                         {isReal && <AdjustmentHistory adjustments={adjustments} labels={factorLabels} />}
                       </TabsContent>
 
+                      {/* ===== TAB 3: EVIDENCE — sources attached to this item, plus a picker to attach more ===== */}
                       <TabsContent value="evidence" className="p-5 sm:p-6">
                         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                           <div>
@@ -853,6 +1050,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ===== PAGE 2: SOURCE LIBRARY — every source, with Approve / Withdraw approval buttons ===== */}
           {view === "sources" && (
             <section className="mx-auto max-w-6xl">
               <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -869,17 +1067,14 @@ export default function App() {
             </section>
           )}
 
-          {view === "evaluation" && (
-            <section className="mx-auto max-w-6xl">
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-blue-600">System Evaluation</p>
-                <h2 className="text-2xl font-semibold tracking-tight">FastAPI Integration Status</h2>
-              </div>
-            </section>
-          )}
+          {/* ===== PAGE 3: EVALUATION — summary numbers and charts (EvaluationView.tsx) ===== */}
+          {view === "evaluation" && <EvaluationView items={items} sources={sources} />}
         </main>
       </div>
 
+      {/* ===== POP-UP DIALOGS. Each is hidden until its `...Open` state is true. ===== */}
+
+      {/* Sign in dialog: username + password form; submitting runs handleLogin. */}
       <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -925,6 +1120,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
 
+      {/* Upload agenda dialog: choose a file, then "Upload to FastAPI" runs processAgenda. */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent>
           <DialogHeader>
@@ -951,6 +1147,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
 
+      {/* Add source dialog: title, optional URL, optional file; "Attach source" runs addSource. */}
       <Dialog open={sourceOpen} onOpenChange={setSourceOpen}>
         <DialogContent>
           <DialogHeader>
@@ -983,76 +1180,9 @@ export default function App() {
   )
 }
 
-function BriefingList({ title, icon: Icon, items, empty = "No information available." }: { title: string; icon: React.ComponentType<{ className?: string }>; items: any[]; empty?: string }) {
-  return (
-    <div>
-      <h3 className="mb-3 flex items-center gap-2 font-semibold"><Icon className="size-4 text-blue-600" /> {title}</h3>
-      {items && items.length > 0 ? (
-        <ul className="space-y-4 text-sm leading-6 text-slate-700">
-          {items.map((item, idx) => {
-            const text = typeof item === 'string' ? item : item.text;
-            const supportLevel = typeof item === 'string' ? null : item.support_level;
-            const citations = typeof item === 'string' ? null : item.citations;
-            
-            return (
-              <li key={idx} className="flex flex-col gap-1">
-                <div className="flex items-start gap-2">
-                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-blue-500" /> 
-                  <div className="flex flex-wrap items-center">
-                    <span className="mr-2">{text}</span>
-                    
-                    {supportLevel && (
-                      <span className={`mr-2 mt-0.5 inline-flex items-center rounded-md px-2 py-0.5 text-[0.65rem] font-medium ring-1 ring-inset ${
-                        supportLevel.toLowerCase() === 'high' ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 
-                        supportLevel.toLowerCase() === 'moderate' ? 'bg-amber-50 text-amber-800 ring-amber-600/20' : 
-                        'bg-slate-50 text-slate-600 ring-slate-500/10'
-                      }`}>
-                        {supportLevel} Support
-                      </span>
-                    )}
-
-                    {citations && citations.length > 0 && (
-                      <span className="mt-0.5 inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[0.65rem] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
-                        {citations.length} Source{citations.length !== 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {citations && citations.length > 0 && (
-                  <ul className="ml-5 mt-1 space-y-1 border-l-2 border-slate-200 pl-3">
-                    {citations.map((cite: string, i: number) => (
-                      <li key={i} className="text-xs text-slate-500 font-mono flex items-center">
-                        <svg className="w-3 h-3 mr-1.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                        </svg>
-                        Ref: {cite}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      ) : <EmptySection>{empty}</EmptySection>}
-    </div>
-  )
-}
-
-function EditableList({ title, icon: Icon, items, onChange }: { title: string; icon: React.ComponentType<{ className?: string }>; items: string[]; onChange: (items: string[]) => void }) {
-  return (
-    <div>
-      <h3 className="mb-3 flex items-center gap-2 font-semibold"><Icon className="size-4 text-blue-600" /> {title}</h3>
-      <Textarea
-        value={items ? items.join("\n") : ""}
-        onChange={(event) => onChange(event.target.value.split("\n").filter(Boolean))}
-        className="min-h-40 resize-y leading-6"
-      />
-    </div>
-  )
-}
-
+// One source card (used on the Evidence tab and in the Source Library): type, date, approval badge, title,
+// a link to the original, the excerpt, and the Approve / Detach buttons when those actions are passed in.
+// `expanded` shows the whole excerpt instead of the first 3 lines.
 function SourceCard({ source, expanded = false, onToggleApproval, onDetach }: { source: SourceRecord; expanded?: boolean; onToggleApproval?: (source: SourceRecord) => void; onDetach?: (source: SourceRecord) => void }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

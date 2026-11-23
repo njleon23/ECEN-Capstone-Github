@@ -1,4 +1,8 @@
 // FollowUpBox.tsx
+//
+// The "Ask a follow-up question" box on the Briefing tab. The user types a question about the open agenda
+// item; the backend answers using only approved sources, or explains why it can't (outside scope, or not
+// enough evidence). Every question asked during this visit stays listed, newest first.
 import { useState } from "react"
 import { Loader2, MessageSquare } from "lucide-react"
 
@@ -9,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { askFollowUp, FollowUpResult } from "./analysisApi"
 import { ApiError } from "./api"
 
+// The text shown on the badge above each answer, one per possible result from the backend.
 const STATUS_LABEL: Record<FollowUpResult["status"], string> = {
   answered: "Answered from approved sources",
   refused: "Not answered: outside this tool's scope",
@@ -16,6 +21,7 @@ const STATUS_LABEL: Record<FollowUpResult["status"], string> = {
   error: "Could not answer",
 }
 
+// Badge colors: green = answered, amber = refused, gray = not enough evidence, red = error.
 const STATUS_STYLE: Record<FollowUpResult["status"], string> = {
   answered: "border-emerald-200 bg-emerald-50 text-emerald-700",
   refused: "border-amber-200 bg-amber-50 text-amber-700",
@@ -35,20 +41,29 @@ export function FollowUpBox({
 }) {
   const [question, setQuestion] = useState("")
   const [asking, setAsking] = useState(false)
-  const [result, setResult] = useState<FollowUpResult | null>(null)
+  // Every question asked about this item in this visit, newest first. The parent remounts this box per item,
+  // so one item's answers never show under another.
+  const [history, setHistory] = useState<Array<{ id: number; question: string; result: FollowUpResult }>>([])
 
+  // Runs when "Ask" is clicked or Enter is pressed.
   const ask = async () => {
     const trimmed = question.trim()
-    if (!trimmed || asking) return
+    if (!trimmed || asking) return   // ignore empty questions and double-clicks while one is running
     setAsking(true)
+    // Adds one question + answer to the top of the history list.
+    const record =(result: FollowUpResult) =>
+      setHistory((current) => [{ id: Date.now(), question: trimmed, result }, ...current])
     try {
-      setResult(await askFollowUp(itemId, trimmed, token))
+      record(await askFollowUp(itemId, trimmed, token))
+      setQuestion("")   // clear the box only when the question went through
     } catch (error) {
+      // Expired session (401) or too many requests (429): let App.tsx handle it (sign-in dialog / wait message).
       if (error instanceof ApiError && (error.status === 401 || error.status === 429)) {
         onApiError(error, "Failed to ask question.")
         return
       }
-      setResult({ status: "error", text: "The backend could not be reached.", citations: [] })
+      // Any other failure (for example the backend is offline) is shown as an error entry in the history.
+      record({ status: "error", text: "The backend could not be reached.", citations: [] })
     } finally {
       setAsking(false)
     }
@@ -72,18 +87,29 @@ export function FollowUpBox({
         </Button>
       </div>
 
-      {result && (
-        <div className="mt-4 space-y-3" data-testid="follow-up-result">
-          <Badge variant="outline" className={STATUS_STYLE[result.status]}>{STATUS_LABEL[result.status]}</Badge>
-          <p className="text-sm leading-6 text-slate-700">{result.text}</p>
-          {result.citations.map((citation) => (
-            <div key={citation.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-              <p className="font-semibold text-slate-800">{citation.title}</p>
-              <p className="text-slate-500">{[citation.date, citation.location].filter(Boolean).join(" · ")}</p>
-              <p className="mt-1 line-clamp-3">{citation.excerpt}</p>
-            </div>
+      {/* History of questions and answers, newest first. Older entries are slightly faded.
+          The newest entry keeps data-testid="follow-up-result" so automated tests can find the latest answer. */}
+      {history.length > 0 && (
+        <ol className="mt-4 space-y-4" aria-label="Follow-up questions asked">
+          {history.map(({ id, question: asked, result }, index) => (
+            <li
+              key={id}
+              className={`space-y-3 ${index > 0 ? "border-t border-slate-100 pt-4 opacity-80" : ""}`}
+              data-testid={index === 0 ? "follow-up-result" : undefined}
+            >
+              <p className="text-sm font-semibold text-slate-900">Q: {asked}</p>
+              <Badge variant="outline" className={STATUS_STYLE[result.status]}>{STATUS_LABEL[result.status]}</Badge>
+              <p className="text-sm leading-6 text-slate-700">{result.text}</p>
+              {result.citations.map((citation) => (
+                <div key={citation.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                  <p className="font-semibold text-slate-800">{citation.title}</p>
+                  <p className="text-slate-500">{[citation.date, citation.location].filter(Boolean).join(" · ")}</p>
+                  <p className="mt-1 line-clamp-3">{citation.excerpt}</p>
+                </div>
+              ))}
+            </li>
           ))}
-        </div>
+        </ol>
       )}
       <p className="mt-3 text-xs text-slate-400">Answers use approved sources only. This tool does not recommend how to vote.</p>
     </div>
