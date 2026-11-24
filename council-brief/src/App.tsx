@@ -71,7 +71,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Toaster } from "@/components/ui/sonner"
 
 // Our own frontend files (see the list at the top of this file).
-import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, formatMeetingDate, API_BASE_URL, ApiError, readErrorMessage } from "./api"
+import { fetchAgendas, uploadAgendaPdf, fetchSources, addSourceRecord, formatMeetingDate, API_BASE_URL, ApiError, readErrorMessage, SOURCE_TYPES, sourceTypeLabel } from "./api"
 import { ClaimList, QuestionList } from "./BriefingParts"
 import { EvaluationView } from "./EvaluationView"
 import { AgendaItem, SourceRecord } from "./api"
@@ -213,6 +213,7 @@ export default function App() {
   const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [sourceTitle, setSourceTitle] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
+  const [sourceType, setSourceType] = useState("other")              // Add source dialog: chosen source type
 
   // ---- First load: when the page opens, fetch agendas and sources from the backend ----
   // The empty [] at the end means "run once, when the page first appears".
@@ -552,7 +553,7 @@ export default function App() {
       const text = sourceFile ? await extractFileText(sourceFile) : ""
       const newSource = {
         title: sourceTitle.trim() || sourceFile?.name || "Untitled source",
-        type: sourceFile?.type === "application/pdf" ? "Uploaded PDF" : "Uploaded record",
+        type: sourceType,
         date: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
         url: sourceUrl.trim(),
         excerpt: text.replace(/\s+/g, " ").trim().slice(0, 500) || "No text excerpt was supplied.",
@@ -576,6 +577,7 @@ export default function App() {
       setSourceOpen(false)
       setSourceTitle("")
       setSourceUrl("")
+      setSourceType("other")
       setSourceFile(null)
       toast.success("Source successfully registered with backend.")
     } catch (error) {
@@ -1160,6 +1162,19 @@ export default function App() {
               <Input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} placeholder="FY27 proposed budget" />
             </label>
             <label className="block space-y-2 text-sm font-medium">
+              Source type
+              <select
+                value={sourceType}
+                onChange={(event) => setSourceType(event.target.value)}
+                className="block h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900"
+              >
+                {SOURCE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+              <span className="block text-xs font-normal text-slate-500">
+                Used in scoring: budget, checkbook, contract and vendor records count toward cost; minutes and transcripts toward past opposition; comments, surveys, news and public discussion toward public discussion.
+              </span>
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
               Public source URL <span className="font-normal text-slate-400">optional</span>
               <Input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://..." />
             </label>
@@ -1189,7 +1204,7 @@ function SourceCard({ source, expanded = false, onToggleApproval, onDetach }: { 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">{source.type}</Badge>
+            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">{sourceTypeLabel(source.type)}</Badge>
             <span className="text-xs text-slate-400">{source.date}</span>
             {typeof source.approved === "boolean" && (
               <Badge variant="outline" className={source.approved ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>

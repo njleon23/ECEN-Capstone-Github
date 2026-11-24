@@ -109,6 +109,32 @@ interface BackendSourceResponse {
 
 type SourceRecordInput = Omit<SourceRecord, "id">
 
+// Source types the backend accepts (backend/app/models.py, SourceCreate.source_type), with the text shown
+// in the Add source dropdown and on source cards. The type matters for scoring: the priority score only
+// counts a source toward a factor when its type fits that factor (backend/app/analysis/config.py):
+//   cost exposure      -> budget, checkbook, vendor, contract
+//   past opposition    -> minutes, transcript
+//   public discussion  -> public_discussion, comment, survey, news
+export const SOURCE_TYPES = [
+  { value: "budget", label: "Budget" },
+  { value: "checkbook", label: "Checkbook / expenditures" },
+  { value: "contract", label: "Contract" },
+  { value: "vendor", label: "Vendor record" },
+  { value: "minutes", label: "Meeting minutes" },
+  { value: "transcript", label: "Meeting transcript" },
+  { value: "public_discussion", label: "Public discussion" },
+  { value: "comment", label: "Public comment" },
+  { value: "survey", label: "Survey" },
+  { value: "news", label: "News article" },
+  { value: "agenda", label: "Agenda" },
+  { value: "other", label: "Other" },
+] as const
+
+// "public_discussion" -> "Public discussion". Unknown types are shown as they are.
+export function sourceTypeLabel(type: string): string {
+  return SOURCE_TYPES.find((t) => t.value === type)?.label ?? type
+}
+
 async function requireSuccessfulResponse(
   response: Response,
   fallbackMessage: string,
@@ -264,7 +290,8 @@ export async function addSourceRecord(
 ): Promise<SourceRecord> {
   const requestBody = {
     title: record.title,
-    source_type: "other",
+    // The type chosen in the Add source dialog; anything the backend would not accept falls back to "other".
+    source_type: SOURCE_TYPES.some((t) => t.value === record.type) ? record.type : "other",
     text: record.excerpt,
     source_date: toIsoDate(record.date),
     source_url: record.url || null,
